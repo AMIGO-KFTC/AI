@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import re
 from typing import Any
-from collections.abc import Iterable
 
 from ..config import AgentConfig
 from ..kb import Evidence, KBAdapter
@@ -77,6 +76,8 @@ COMPANION_FIELDS: dict[str, set[str]] = {
     "issues": {"status", "action", "due"},
 }
 
+SENTENCE_FALLBACK_ONLY = {"duties", "systems", "projects"}
+
 ISSUE_HINTS = re.compile(r"이슈|문제|미확정|확정된다|지연|만료|넘어|주의|반드시|리스크|필요하다|중지|늦어지면")
 PROJECT_HINTS = re.compile(r"추진|예정|진행 중|진행중|검토 중|입찰|작성 중")
 SYSTEM_NAME_RE = re.compile(r"([A-Z][A-Za-z0-9]{1,15}(?:\s[A-Z][A-Za-z0-9]+)?|[가-힣A-Za-z]+시스템|[가-힣A-Za-z]+콘솔)")
@@ -100,22 +101,25 @@ class OfflineEngine:
     def analyze_slot(self, spec: SlotSpec, profile: dict[str, Any], kb: KBAdapter) -> SlotResult:
         evidences = retrieve_for_slot(spec, profile, kb, top_k=self.config.search_top_k)
         slot: SlotState = {"key": spec.key, "items": [], "coverage": "missing", "summary": "", "note": ""}
-        for ev in evidences:
-            # 대화 답변은 이미 슬롯에 반영되어 있으므로 규칙 기반 추출 대상에서 뺀다(질문 문장이 섞여 오인식됨)
-            if ev.score < 0.2 or "chat" in (ev.metadata.get("source_type"), ev.metadata.get("file_type")):
-                continue
-            for title, fields in self._candidates(spec, ev, profile):
-                if len(slot["items"]) >= 8 and not any(_norm(i.get("title", "")) == _norm(title) for i in slot["items"]):
-                    break
-                upsert_item(slot, item_id="", title=title, fields=fields, citations=[ev.to_citation(title)], origin="document")
+        # 대화 답변은 이미 슬롯에 반영되어 있으므로 규칙 기반 추출 대상에서 뺀다(질문 문장이 섞여 오인식됨)
+        usable = [ev for ev in evidences if ev.score >= 0.2 and "chat" not in (ev.metadata.get("source_type"), ev.metadata.get("file_type"))]
+        # 1차: 표(머리글 매핑)  2차: 문장. 담당 업무·시스템·과제는 문장 추출이 부정확해 표가 부족할 때만 쓴다.
+        for ev in usable:
+            for title, fields in self._table_candidates(spec, ev.text):
+                self._add(slot, title, fields, ev)
+        if spec.key not in SENTENCE_FALLBACK_ONLY or len(slot["items"]) < spec.min_items:
+            for ev in usable:
+                for title, fields in self._sentence_candidates(spec, ev, profile):
+                    self._add(slot, title, fields, ev)
         items = slot["items"]
         slot["coverage"] = evaluate_coverage(spec, items)
         slot["summary"] = self._slot_summary(spec, items)
         return SlotResult(slot=slot, gaps=self._gaps(spec, items, slot["coverage"]))
 
-    def _candidates(self, spec: SlotSpec, ev: Evidence, profile: dict[str, Any]) -> Iterable[tuple[str, dict[str, str]]]:
-        yield from self._table_candidates(spec, ev.text)
-        yield from self._sentence_candidates(spec, ev, profile)
+    def _add(self, slot: SlotState, title: str, fields: dict[str, str], ev: Evidence) -> None:
+        if len(slot["items"]) >= 8 and not any(_norm(i.get("title", "")) == _norm(title) for i in slot["items"]):
+            return
+        upsert_item(slot, item_id="", title=title, fields=fields, citations=[ev.to_citation(title)], origin="document")
 
     def _table_candidates(self, spec: SlotSpec, text: str):
         lines = text.split("\n")
@@ -309,7 +313,7 @@ class OfflineEngine:
         update = {"slot": spec.key, "item_id": target["id"] if target else "", "title": title, "fields": fields, "citations": []}
         lines = [f"- **{spec.label(k)}**: {v}" for k, v in fields.items() if v]
         reply = (
-            f"다음과 같이 정리했어요.\n**[{spec.title}] {title}**\n" + "\n".join(lines)
+            f"다음과 같이 정리했어요.\n\n**[{spec.title}] {title}**\n" + "\n".join(lines)
             + "\n\n맞으면 '네', 고칠 부분이 있으면 말씀해 주세요."
         )
         return Interpretation("correct" if correcting else "answer", updates=[update], resolved_gap_ids=[gap["id"]] if gap else [], reply=reply)

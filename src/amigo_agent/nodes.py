@@ -156,8 +156,10 @@ def summarize(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
         slot = slots.get(spec.key) or {}
         coverage = slot.get("coverage", "missing")
         icon = {"sufficient": "🟢", "partial": "🟡", "missing": "🔴"}.get(coverage, "⚪")
-        detail = slot.get("summary") or ""
-        lines.append(f"{icon} **{spec.title}** · {COVERAGE_LABELS.get(coverage, coverage)} ({len(slot.get('items', []))}건){' — ' + detail if detail else ''}")
+        detail = (slot.get("summary") or "").strip()
+        if len(detail) > 90:
+            detail = detail[:89] + "…"
+        lines.append(f"- {icon} **{spec.title}** · {COVERAGE_LABELS.get(coverage, coverage)} ({len(slot.get('items', []))}건){' — ' + detail if detail else ''}")
     remaining = len(open_gaps(gaps))
     if remaining:
         closing = (

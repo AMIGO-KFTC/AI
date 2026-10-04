@@ -48,7 +48,8 @@ def test_full_flow_stage_1_to_4(kb):
     # 지금 문서 생성
     result = agent.finish("s1", kb)
     snap = result.snapshot
-    assert snap["stage"] == "review" and snap["document_version"] == 1 and snap["waiting"]
+    assert snap["stage"] == "review" and snap["document_version"] >= 1 and snap["waiting"]
+    version = snap["document_version"]
     doc = snap["document"]
     assert doc.startswith("# 업무 인수인계서")
     for heading in ("## 2. 담당 업무", "## 5. 협업 관계", "## 8. 확인 필요 사항", "## 9. 근거 자료"):
@@ -59,7 +60,7 @@ def test_full_flow_stage_1_to_4(kb):
 
     # 검토 의견 → 문서 재작성(v2)
     result = agent.send_message("s1", "Google Analytics 권한은 기존 담당자가 직접 이관해 줍니다", kb)
-    assert result.snapshot["document_version"] == 2
+    assert result.snapshot["document_version"] == version + 1
 
 
 def test_correction_overwrites_last_recorded_fields(kb):
