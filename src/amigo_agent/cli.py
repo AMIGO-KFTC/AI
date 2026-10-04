@@ -11,6 +11,7 @@ API 키가 없으면 규칙 기반 오프라인 엔진으로 동작한다(AMIGO_
 from __future__ import annotations
 
 import argparse
+import glob
 import sys
 import uuid
 
@@ -54,7 +55,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     kb = KnowledgeBase(args.kb or f"cli-{uuid.uuid4().hex[:8]}")
-    for item in args.files:
+    files: list[str] = []
+    for item in args.files:  # Windows PowerShell 은 *.pdf 를 펼쳐 주지 않으므로 직접 확장
+        is_pattern = not item.startswith(("http://", "https://")) and any(ch in item for ch in "*?[")
+        matches = sorted(glob.glob(item)) if is_pattern else []
+        files.extend(matches or [item])
+    for item in files:
         try:
             res = kb.add_url(item) if item.startswith(("http://", "https://")) else kb.add_file(item)
             print(f"✔ {res.source_name} ({res.chunk_count}개 청크)")

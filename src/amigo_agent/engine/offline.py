@@ -379,9 +379,10 @@ class OfflineEngine:
         org = profile.get("organization") or ""
         duties = profile.get("duties") or "담당 업무"
         counts = {k: len(s.get("items", [])) for k, s in slots.items()}
+        subject = name + (f" {profile['position']}" if profile.get("position") else "")
         overview = (
-            f"{name}{(' ' + profile['position']) if profile.get('position') else ''}은(는) {org + '에서 ' if org else ''}"
-            f"{duties}을(를) 담당해 왔습니다. 담당 업무 {counts.get('duties', 0)}건, 반복 업무 {counts.get('recurring', 0)}건, "
+            f"{josa(subject, '은/는')} {org + '에서 ' if org else ''}"
+            f"{josa(duties, '을/를')} 담당해 왔습니다. 담당 업무 {counts.get('duties', 0)}건, 반복 업무 {counts.get('recurring', 0)}건, "
             f"진행 중인 과제 {counts.get('projects', 0)}건을 인계하며, 주요 이슈 {counts.get('issues', 0)}건에 유의해야 합니다."
         )
         key_points: list[str] = []
