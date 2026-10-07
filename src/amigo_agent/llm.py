@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from typing import Any
 from collections.abc import Callable
 
@@ -22,6 +23,40 @@ from .config import AgentConfig
 logger = logging.getLogger(__name__)
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
+
+# 비용 추정용 단가(USD / 100만 토큰): 입력, 출력, 캐시 쓰기(5분), 캐시 읽기. 표에 없는 모델은 비용을 계산하지 않는다.
+PRICES = {"claude-opus-5-5": (4.0, 20.0, 5.0, 0.20)}
+USAGE_KEYS = ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+
+
+class UsageMeter:
+    """여러 스레드(슬롯 병렬 분석)에서 부르는 API 호출의 토큰 사용량을 모은다."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.requests = 0
+        self.tokens = dict.fromkeys(USAGE_KEYS, 0)
+
+    def add(self, usage: Any) -> dict[str, int]:
+        counted = {k: int(getattr(usage, k, 0) or 0) for k in USAGE_KEYS}
+        with self._lock:
+            self.requests += 1
+            for k, v in counted.items():
+                self.tokens[k] += v
+        return counted
+
+    def summary(self, model: str) -> dict[str, Any]:
+        with self._lock:
+            out: dict[str, Any] = {"requests": self.requests, **self.tokens}
+        price = PRICES.get(model)
+        if price:
+            t = out
+            out["estimated_usd"] = round(
+                (t["input_tokens"] * price[0] + t["output_tokens"] * price[1]
+                 + t["cache_creation_input_tokens"] * price[2] + t["cache_read_input_tokens"] * price[3]) / 1_000_000,
+                4,
+            )
+        return out
 
 SEARCH_TOOL = {
     "name": "search_documents",
@@ -65,6 +100,7 @@ class ClaudeLLM:
             client = anthropic.Anthropic(timeout=config.request_timeout, max_retries=3)
         self.client = client
         self.config = config
+        self.usage = UsageMeter()
 
     def structured(
         self,
@@ -139,7 +175,7 @@ class ClaudeLLM:
             kwargs["betas"] = [FALLBACK_BETA]
             kwargs["fallbacks"] = "default"
         try:
-            return self.client.beta.messages.create(**kwargs)
+            response = self.client.beta.messages.create(**kwargs)
         except anthropic.AuthenticationError as exc:
             raise LLMError("Claude API 인증에 실패했습니다. ANTHROPIC_API_KEY 를 확인해 주세요.") from exc
         except anthropic.PermissionDeniedError as exc:
@@ -154,6 +190,11 @@ class ClaudeLLM:
             raise LLMError(f"Claude API 오류가 발생했습니다(HTTP {exc.status_code}). 잠시 후 다시 시도해 주세요.") from exc
         except anthropic.APIConnectionError as exc:
             raise LLMError("Claude API 에 연결하지 못했습니다. 네트워크(프록시) 설정을 확인해 주세요.") from exc
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            counted = self.usage.add(usage)
+            logger.info("claude %s stop=%s tokens=%s", effort, getattr(response, "stop_reason", None), counted)
+        return response
 
 
 def final_text(content: list[Any]) -> str:

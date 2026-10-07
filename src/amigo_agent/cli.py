@@ -76,30 +76,36 @@ def main(argv: list[str] | None = None) -> int:
         "successor": args.successor,
     }
     thread = kb.kb_id
-    agent.start(thread, profile, kb, on_event=_print_event)
-    while True:
-        try:
-            text = input("👤 ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return 0
-        if not text:
-            continue
-        if text == "/quit":
-            return 0
-        if text == "/doc":
-            print(agent.snapshot(thread)["document"] or "(아직 문서가 없습니다)")
-            continue
-        if text == "/state":
-            for key, slot in agent.snapshot(thread)["slots"].items():
-                print(f"- {SLOT_BY_KEY[key].title}: {COVERAGE_LABELS.get(slot.get('coverage'), '')} ({len(slot.get('items', []))}건)")
-            continue
-        if text == "/skip":
-            agent.skip(thread, kb, on_event=_print_event)
-        elif text == "/finish":
-            agent.finish(thread, kb, on_event=_print_event)
-        else:
-            agent.send_message(thread, text, kb, on_event=_print_event)
+    try:
+        agent.start(thread, profile, kb, on_event=_print_event)
+        while True:
+            try:
+                text = input("👤 ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return 0
+            if not text:
+                continue
+            if text == "/quit":
+                return 0
+            if text == "/doc":
+                print(agent.snapshot(thread)["document"] or "(아직 문서가 없습니다)")
+                continue
+            if text == "/state":
+                for key, slot in agent.snapshot(thread)["slots"].items():
+                    print(f"- {SLOT_BY_KEY[key].title}: {COVERAGE_LABELS.get(slot.get('coverage'), '')} ({len(slot.get('items', []))}건)")
+                continue
+            if text == "/skip":
+                agent.skip(thread, kb, on_event=_print_event)
+            elif text == "/finish":
+                agent.finish(thread, kb, on_event=_print_event)
+            else:
+                agent.send_message(thread, text, kb, on_event=_print_event)
+    finally:
+        usage = agent.usage()
+        if usage:
+            print(f"\n[Claude 사용량] 요청 {usage['requests']}회 · 입력 {usage['input_tokens']:,} · 출력 {usage['output_tokens']:,} "
+                  f"· 캐시 읽기 {usage['cache_read_input_tokens']:,} 토큰 · 추정 ${usage.get('estimated_usd', 0):.2f}")
 
 
 if __name__ == "__main__":

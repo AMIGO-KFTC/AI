@@ -84,7 +84,7 @@ SYSTEM_NAME_RE = re.compile(r"([A-Z][A-Za-z0-9]{1,15}(?:\s[A-Z][A-Za-z0-9]+)?|[�
 AFFIRM_RE = re.compile(r"^\s*(네|예|응|넵|맞아|맞습니다|맞아요|맞음|ㅇㅇ|좋아|좋습니다|좋아요|확인|그래|오케이|ok|yes)", re.I)
 SKIP_RE = re.compile(r"(모르겠|몰라|건너|스킵|skip|패스|다음 질문|해당\s*없|^없(어요|습니다|음)?\s*$)", re.I)
 FINISH_RE = re.compile(r"(문서|인수인계서)\s*(를|을)?\s*(생성|작성|만들)|그만|종료|끝내|마무리")
-NEGATIVE_RE = re.compile(r"^\s*(아니|아뇨|틀렸|틀려|수정)")
+NEGATIVE_RE = re.compile(r"^\s*(아니(?:요|오|에요)?|아뇨|틀렸(?:어요|습니다)?|틀려요?|수정(?:해\s*주세요|할게요)?)")
 
 
 def _norm(text: str) -> str:
@@ -372,6 +372,10 @@ class OfflineEngine:
         if spec.key == "recurring" and not fields.get("timing") and "timing" in missing:
             fields["timing"] = text
         return fields
+
+    def plan_questions(self, profile, gaps) -> tuple[list[str], set[str]]:
+        """규칙 엔진은 장별 우선순위를 그대로 쓴다."""
+        return [g["id"] for g in gaps], set()
 
     # ------------------------------------------------------------------ STAGE 4
     def compose_extras(self, profile, slots) -> dict[str, Any]:

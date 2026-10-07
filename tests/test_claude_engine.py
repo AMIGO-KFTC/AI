@@ -159,3 +159,30 @@ def test_slot_output_models_are_strict():
         assert set(fields["required"]) == {f.key for f in SLOT_BY_KEY[spec.key].fields}
     schema = transform_schema(InterpretOutput)
     assert schema["additionalProperties"] is False
+
+
+def test_question_plan_drops_duplicates_and_orders(kb):
+    from amigo_agent.engine.claude import ClaudeEngine
+    from amigo_agent.prompts import PLAN_SYSTEM
+    from amigo_agent.state import open_gaps
+
+    class PlanMessages:
+        def create(self, **kwargs):
+            assert kwargs["system"][0]["text"] == PLAN_SYSTEM
+            assert "gap-b" in kwargs["messages"][0]["content"]
+            plan = {"duplicates": [{"drop_id": "gap-c", "keep_id": "gap-b"}, {"drop_id": "gap-x", "keep_id": "gap-a"}],
+                    "order": ["gap-b", "gap-zz", "gap-a", "gap-b"]}
+            return response([text_block(plan)])
+
+    engine = ClaudeEngine(AgentConfig(llm_mode="claude"), client=SimpleNamespace(beta=SimpleNamespace(messages=PlanMessages())))
+    gaps = [
+        {"id": "gap-a", "slot": "contacts", "question": "업체 담당자는 누구인가요?", "priority": 1, "status": "open"},
+        {"id": "gap-b", "slot": "projects", "question": "입찰 공고 일정은 언제인가요?", "priority": 2, "status": "open"},
+        {"id": "gap-c", "slot": "issues", "question": "공고 일정이 조정됐나요?", "priority": 1, "status": "open"},
+    ]
+    order, drops = engine.plan_questions(PROFILE, gaps)
+    assert order == ["gap-b", "gap-a"] and drops == {"gap-c"}  # 모르는 id 는 무시, 중복은 한 번만
+    for i, gid in enumerate(order):
+        next(g for g in gaps if g["id"] == gid)["rank"] = i
+    remaining = [g for g in gaps if g["id"] not in drops]
+    assert [g["id"] for g in open_gaps(remaining)] == ["gap-b", "gap-a"]  # 계획 순서가 priority 보다 앞선다

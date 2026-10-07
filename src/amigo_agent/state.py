@@ -45,6 +45,7 @@ class Gap(TypedDict, total=False):
     description: str
     question: str
     priority: int  # 1(높음) ~ 3(낮음)
+    rank: int  # 질문 계획(Claude)이 정한 전체 순서. 없으면 priority·장 순서로 정렬
     ask_for_document: bool
     status: str  # open | asked | answered | resolved | skipped
 
@@ -194,4 +195,4 @@ def empty_slots() -> dict[str, SlotState]:
 def open_gaps(gaps: list[Gap]) -> list[Gap]:
     order = {key: i for i, key in enumerate(SLOT_KEYS)}
     candidates = [g for g in gaps if g.get("status") == "open"]
-    return sorted(candidates, key=lambda g: (g.get("priority", 2), order.get(g.get("slot", ""), 99)))
+    return sorted(candidates, key=lambda g: (g.get("rank", 10_000), g.get("priority", 2), order.get(g.get("slot", ""), 99)))

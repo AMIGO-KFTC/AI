@@ -374,6 +374,23 @@ python -m amigo_agent chat --files ../RAG/samples/*.pdf ../RAG/samples/*.docx ..
 | 모델·effort·도구 호출 방식 바꾸기 | `config.py`, `llm.py`, `engine/claude.py` |
 | API 키 없이 쓰는 규칙 기반 추출 손보기 | `engine/offline.py`, `textkit.py` |
 
+### 품질 평가 (Claude)
+
+`evals/run_eval.py` 가 RAG 샘플 6종으로 STAGE 1~4 를 끝까지 돌리고 점수를 냅니다. 모의 인계자(Claude)가 `evals/gold.py` 의 '자료에 없는 기억'으로 답하고, 심사(Claude)가 근거 없는 주장과 질문 품질을 평가합니다. 실행마다 API 비용(약 $1.5)이 듭니다.
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... python evals/run_eval.py --mode claude --questions 12 --out evals/runs/latest
+```
+
+| 지표 | 뜻 |
+|---|---|
+| doc_recall | 자료에 있는 핵심 사실 31개 중 문서에 들어간 비율 |
+| hidden_recall | 자료에 없고 인계자만 아는 사실 9개 중 질의응답으로 받아 문서에 넣은 비율 |
+| unsupported | 자료·답변·기초 정보 어디에도 근거가 없는 주장 수 |
+| question_from_memory / single_topic | 기억으로 바로 답할 수 있는 질문, 한 가지만 묻는 질문의 비율 |
+
+터미널 대화 도구(`python -m amigo_agent chat`)도 끝날 때 Claude 요청 수·토큰·추정 비용을 보여 줍니다.
+
 ### 폴더 구조
 
 ```text
@@ -392,6 +409,7 @@ src/amigo_agent/
   config.py       환경변수 설정
   cli.py          터미널 체험 도구
 tests/            오프라인 흐름 · 가짜 Claude 클라이언트 · 문서 렌더링 테스트
+evals/            실제 Claude 품질 평가(정답 사실, 모의 인계자, 심사)
 ```
 
 ## 상태 머신 (STAGE 1 → 4)

@@ -26,7 +26,7 @@ from .config import AgentConfig
 from .engine import Engine, Interpretation, InterpretInput, SlotResult
 from .engine.offline import OfflineEngine
 from .kb import KBAdapter
-from .llm import LLMOutputError
+from .llm import LLMError, LLMOutputError
 from .render import render_document
 from .state import (
     AgentState,
@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 
 QUICK_REPLIES_QNA = ["모르겠어요 (건너뛰기)", "지금 문서 생성"]
 QUICK_REPLIES_CONFIRM = ["네, 맞아요", "수정할게요"]
+MAX_CONFIRM_ROUNDS = 2  # 정리한 내용과 한 번 고친 내용까지 확인을 묻고, 그다음 고침은 바로 반영
 
 
 @dataclass
@@ -136,8 +137,18 @@ def collect_gaps(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str,
     for key in SLOT_KEYS:
         gaps.extend(copy.deepcopy((state.get("slots") or {}).get(key, {}).get("proposed_gaps", [])))
     ordered = open_gaps(gaps)
+    try:  # 장마다 따로 만든 질문 후보에서 중복을 빼고 전체 순서를 정한다
+        order, drops = runtime.context.engine.plan_questions(state.get("profile", {}), ordered)
+    except LLMError as exc:
+        logger.warning("question planning failed, keep slot order: %s", exc)
+        order, drops = [], set()
+    ranks = {gid: i for i, gid in enumerate(order)}
+    planned = [g for g in ordered if g["id"] not in drops]
+    for g in planned:
+        if g["id"] in ranks:
+            g["rank"] = ranks[g["id"]]
     _progress("자료 분석을 마쳤어요.", current=len(SLOTS), total=len(SLOTS))
-    return {"gaps": ordered}
+    return {"gaps": open_gaps(planned)}
 
 
 # =========================================================================== STAGE 2
@@ -324,11 +335,16 @@ def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
             out["transcript"].append(_say("info", result.reply or "말씀하신 내용을 반영해서 문서를 다시 작성할게요."))
             out["doc_dirty"] = True
         else:
+            rounds = int(pending.get("rounds", 0)) + 1 if pending else 0
+            if rounds >= MAX_CONFIRM_ROUNDS:
+                # 같은 내용을 여러 번 고쳐도 확인이 끝나지 않으면 마지막 정리로 반영하고 다음 질문으로 넘어간다(무한 반복 방지).
+                out.update(pending={}, last_intent="confirm", ack="고쳐 주신 내용으로 반영해 둘게요. 문서 초안에서도 다시 고치실 수 있어요.")
+                return out
             out["transcript"].append(
                 _say("confirm", result.reply or "정리한 내용이 맞는지 확인해 주세요.", quick_replies=QUICK_REPLIES_CONFIRM, refs=refs)
             )
             keys = {item_id: list((up.get("fields") or {}).keys()) for (_, item_id), up in zip(refs, result.updates)}
-            out["pending"] = {"gap_id": current["id"] if current else "", "refs": refs, "keys": keys}
+            out["pending"] = {"gap_id": current["id"] if current else "", "refs": refs, "keys": keys, "rounds": rounds}
         return out
 
     # 되묻기·잡담·해석 불가: 답한 뒤 같은 질문에 대한 답을 기다린다.

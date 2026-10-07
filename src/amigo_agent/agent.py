@@ -79,6 +79,11 @@ class HandoverAgent:
     def describe(self) -> dict[str, Any]:
         return {"engine": self.engine.name, "model": self.config.model if self.engine.name == "claude" else None}
 
+    def usage(self) -> dict[str, Any] | None:
+        """Claude 엔진이면 지금까지의 API 호출 수·토큰 사용량·추정 비용(USD), 오프라인 엔진이면 None."""
+        llm = getattr(self.engine, "llm", None)
+        return llm.usage.summary(self.config.model) if llm is not None else None
+
     def mermaid(self) -> str:
         return self.graph.get_graph().draw_mermaid()
 

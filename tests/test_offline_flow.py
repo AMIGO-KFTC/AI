@@ -77,6 +77,22 @@ def test_correction_overwrites_last_recorded_fields(kb):
     assert finance["confirmed"] is True
 
 
+
+def test_repeated_corrections_stop_after_two_rounds(kb):
+    """정리 확인 → 고친 내용 확인 다음의 고침은 더 묻지 않고 반영한 뒤 다음 질문으로 넘어간다(무한 반복 방지)."""
+    agent = HandoverAgent()
+    agent.start("s5", PROFILE, kb)
+    assert kinds(agent.send_message("s5", "재무팀 박지훈 차장 연락처는 내선 2345 입니다", kb)) == ["confirm"]
+    first = agent.send_message("s5", "아니요, 내선 2346 이에요", kb)
+    assert kinds(first) == ["confirm"]
+    assert "요, " not in first.messages[0]["content"]  # '아니요' 를 통째로 떼어 낸다
+    second = agent.send_message("s5", "아니요, 내선 2347 이에요", kb)
+    assert kinds(second) == ["question"]
+    assert second.messages[0]["content"].startswith("고쳐 주신 내용으로 반영해 둘게요.")
+    assert not second.snapshot["pending"] and second.snapshot["question_count"] == 2
+    finance = next(it for it in second.snapshot["slots"]["contacts"]["items"] if it["title"] == "재무팀")
+    assert finance["fields"]["contact"] == "내선 2347"
+
 def test_files_trigger_reanalysis_and_keep_user_answers(kb):
     agent = HandoverAgent()
     agent.start("s3", PROFILE, kb)

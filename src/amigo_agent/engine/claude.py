@@ -21,10 +21,12 @@ from ..prompts import (
     ANALYSIS_SYSTEM,
     COMPOSE_SYSTEM,
     INTERPRET_SYSTEM,
+    PLAN_SYSTEM,
     SUMMARY_SYSTEM,
     analysis_user,
     compose_user,
     interpret_user,
+    plan_user,
     summary_user,
 )
 from ..state import Gap, SlotState, combine_coverage, evaluate_coverage, new_id, upsert_item
@@ -90,6 +92,18 @@ class InterpretOutput(BaseModel):
     updates: list[ItemUpdate]
     resolved_gap_ids: list[str]
     reply: str
+
+
+class DuplicatePair(BaseModel):
+    model_config = _STRICT
+    drop_id: str
+    keep_id: str
+
+
+class PlanOutput(BaseModel):
+    model_config = _STRICT
+    duplicates: list[DuplicatePair]
+    order: list[str]
 
 
 class SummaryOutput(BaseModel):
@@ -174,6 +188,22 @@ class ClaudeEngine:
                 }
             )
         return SlotResult(slot=slot, gaps=gaps)
+
+    def plan_questions(self, profile: dict[str, Any], gaps: list[Gap]) -> tuple[list[str], set[str]]:
+        """장별 질문 후보의 중복을 없애고 전체 우선순위를 정한다 → (물을 순서, 뺄 질문 id)."""
+        if len(gaps) < 2:
+            return [g["id"] for g in gaps], set()
+        output = self.llm.structured(
+            system=PLAN_SYSTEM,
+            user=plan_user(profile, gaps),
+            output_model=PlanOutput,
+            effort=self.config.effort_chat,
+            max_tokens=4000,
+        )
+        known = {g["id"] for g in gaps}
+        drops = {d.drop_id for d in output.duplicates if d.drop_id in known and d.keep_id in known and d.drop_id != d.keep_id}
+        order = [gid for gid in dict.fromkeys(output.order) if gid in known and gid not in drops]
+        return order, drops
 
     # ------------------------------------------------------------------ STAGE 2
     def summarize(self, profile, slots, gaps, sources) -> str:
