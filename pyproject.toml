@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "amigo-agent"
+version = "0.1.0"
+description = "AMIGO 인수인계 시스템 - LangGraph 기반 STAGE 1~4 인수인계 인터뷰 에이전트"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "langgraph>=1.0",
+    "langgraph-checkpoint-sqlite>=2.0",
+    "anthropic>=1.0",
+    "pydantic>=2.7",
+]
+
+[project.optional-dependencies]
+# 실제 지식베이스(RAG 저장소)와 함께 쓸 때: pip install -e ../RAG 를 먼저 하거나 아래 extra 사용
+rag = ["amigo-rag"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+amigo-agent = "amigo_agent.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/amigo_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
