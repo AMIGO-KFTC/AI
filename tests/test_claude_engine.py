@@ -100,7 +100,7 @@ class FakeClient:
 
 def test_claude_engine_end_to_end(kb):
     client = FakeClient()
-    agent = HandoverAgent(AgentConfig(llm_mode="claude", max_concurrency=1), client=client)
+    agent = HandoverAgent(AgentConfig(llm_mode="claude", model="claude-opus-5-5", max_concurrency=1), client=client)
     assert agent.describe() == {"engine": "claude", "model": "claude-opus-5-5"}
 
     seen = []
@@ -194,3 +194,15 @@ def test_question_plan_drops_duplicates_and_orders(kb):
         next(g for g in gaps if g["id"] == gid)["rank"] = i
     remaining = [g for g in gaps if g["id"] not in drops]
     assert [g["id"] for g in open_gaps(remaining)] == ["gap-b", "gap-a"]  # 계획 순서가 priority 보다 앞선다
+
+
+def test_haiku_requests_skip_unsupported_parameters(kb):
+    """기본 모델(Haiku 4.5)에는 effort·fallbacks 를 보내지 않는다(보내면 400)."""
+    client = FakeClient()
+    config = AgentConfig(llm_mode="claude", max_concurrency=1)
+    assert config.model == "claude-haiku-4-5"
+    HandoverAgent(config, client=client).start("h1", PROFILE, kb)
+    call = client.messages.calls[0]
+    assert call["model"] == "claude-haiku-4-5"
+    assert "effort" not in call["output_config"] and call["output_config"]["format"]["type"] == "json_schema"
+    assert "fallbacks" not in call and "betas" not in call
