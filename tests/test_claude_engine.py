@@ -23,8 +23,11 @@ def tool_use(query, uid="toolu_1"):
     return SimpleNamespace(type="tool_use", id=uid, name="search_documents", input={"query": query})
 
 
+USAGE = SimpleNamespace(input_tokens=100, output_tokens=50, cache_creation_input_tokens=0, cache_read_input_tokens=1000)
+
+
 def response(blocks, stop="end_turn"):
-    return SimpleNamespace(content=[SimpleNamespace(type="thinking", thinking="", signature="sig")] + blocks, stop_reason=stop)
+    return SimpleNamespace(content=[SimpleNamespace(type="thinking", thinking="", signature="sig")] + blocks, stop_reason=stop, usage=USAGE)
 
 
 class FakeMessages:
@@ -100,8 +103,13 @@ def test_claude_engine_end_to_end(kb):
     agent = HandoverAgent(AgentConfig(llm_mode="claude", max_concurrency=1), client=client)
     assert agent.describe() == {"engine": "claude", "model": "claude-opus-5-5"}
 
-    result = agent.start("c1", PROFILE, kb)
+    seen = []
+    result = agent.start("c1", PROFILE, kb, on_event=seen.append)
     snap = result.snapshot
+    usage_events = [e for e in seen if e["type"] == "usage"]
+    assert usage_events and all(e["output_tokens"] == 50 for e in usage_events)
+    assert usage_events[0]["cost_usd"] == round((100 * 4 + 50 * 20 + 1000 * 0.2) / 1e6, 6)  # Opus 5.5 단가
+    assert agent.usage()["requests"] == len(usage_events)
     assert [m["kind"] for m in result.messages] == ["summary", "question"]
     assert result.messages[0]["content"].startswith("자료 5건에서")
     assert "재무팀 박지훈 차장의 연락처" in result.messages[1]["content"]

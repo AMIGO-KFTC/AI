@@ -48,15 +48,33 @@ class UsageMeter:
     def summary(self, model: str) -> dict[str, Any]:
         with self._lock:
             out: dict[str, Any] = {"requests": self.requests, **self.tokens}
-        price = PRICES.get(model)
-        if price:
-            t = out
-            out["estimated_usd"] = round(
-                (t["input_tokens"] * price[0] + t["output_tokens"] * price[1]
-                 + t["cache_creation_input_tokens"] * price[2] + t["cache_read_input_tokens"] * price[3]) / 1_000_000,
-                4,
-            )
+        cost = estimate_usd(model, out)
+        if cost is not None:
+            out["estimated_usd"] = round(cost, 4)
         return out
+
+
+def estimate_usd(model: str, tokens: dict[str, int]) -> float | None:
+    """토큰 수로 추정 비용(USD)을 계산한다. 단가표(PRICES)에 없는 모델이면 None."""
+    price = PRICES.get(model)
+    if not price:
+        return None
+    return (
+        tokens.get("input_tokens", 0) * price[0] + tokens.get("output_tokens", 0) * price[1]
+        + tokens.get("cache_creation_input_tokens", 0) * price[2] + tokens.get("cache_read_input_tokens", 0) * price[3]
+    ) / 1_000_000
+
+
+def _emit_usage(model: str, counted: dict[str, int]) -> None:
+    """LangGraph 실행 중이면 사용량을 이벤트로 흘려 보낸다(백엔드가 세션별로 누적). 밖에서 부르면 무시."""
+    try:
+        from langgraph.config import get_stream_writer
+
+        writer = get_stream_writer()
+    except Exception:  # 그래프 밖(평가 스크립트 등)에서 호출된 경우
+        return
+    cost = estimate_usd(model, counted)
+    writer({"type": "usage", "model": model, "requests": 1, **counted, "cost_usd": round(cost or 0.0, 6)})
 
 SEARCH_TOOL = {
     "name": "search_documents",
@@ -194,6 +212,7 @@ class ClaudeLLM:
         if usage is not None:
             counted = self.usage.add(usage)
             logger.info("claude %s stop=%s tokens=%s", effort, getattr(response, "stop_reason", None), counted)
+            _emit_usage(self.config.model, counted)
         return response
 
 
