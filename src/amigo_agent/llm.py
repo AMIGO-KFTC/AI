@@ -3,8 +3,8 @@
 - 구조화 출력: output_config.format(JSON 스키마)으로 최종 응답을 Pydantic 모델로 받는다.
 - 도구 호출(Function Calling): 모델이 search_documents 를 부르면 RAG 검색을 실행해 tool_result 로 돌려주는
   수동 루프. 도구 결과에 thinking 블록이 섞여 있어도 응답 content 를 그대로 다시 넣는다(append-only).
-- Claude Opus 5.5 는 thinking 을 끌 수 없으므로 thinking 파라미터는 보내지 않고 effort 로 깊이를 조절한다.
-- 안전 분류기 거절에 대비해 서버 측 fallbacks("default")를 기본으로 켠다(AMIGO_LLM_FALLBACKS=false 로 끔).
+- thinking 파라미터는 보내지 않는다. 지원하는 모델(Opus 5.5·Sonnet 5.5)에는 effort 로 깊이를 조절한다.
+- 안전 분류기 거절에 대비해 지원 모델에는 서버 측 fallbacks("default")를 켠다(AMIGO_LLM_FALLBACKS=false 로 끔).
 """
 
 from __future__ import annotations
@@ -25,7 +25,21 @@ logger = logging.getLogger(__name__)
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 # 비용 추정용 단가(USD / 100만 토큰): 입력, 출력, 캐시 쓰기(5분), 캐시 읽기. 표에 없는 모델은 비용을 계산하지 않는다.
-PRICES = {"claude-opus-5-5": (4.0, 20.0, 5.0, 0.20)}
+PRICES = {
+    "claude-opus-5-5": (4.0, 20.0, 5.0, 0.20),
+    "claude-sonnet-5-5": (2.0, 10.0, 2.5, 0.20),
+    "claude-haiku-4-5": (1.0, 5.0, 1.25, 0.10),
+}
+# 모델마다 받는 파라미터가 다르다(Haiku 4.5 는 effort 를 보내면 400). 표에 없는 모델은 effort 만 보낸다.
+MODEL_FEATURES = {
+    "claude-opus-5-5": {"effort", "fallbacks"},
+    "claude-sonnet-5-5": {"effort", "fallbacks"},
+    "claude-haiku-4-5": set(),
+}
+
+
+def model_features(model: str) -> set[str]:
+    return MODEL_FEATURES.get(model, {"effort"})
 USAGE_KEYS = ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
 
 
@@ -184,12 +198,15 @@ class ClaudeLLM:
             # 시스템 프롬프트는 슬롯·턴이 바뀌어도 같으므로 캐시하고, 도구 루프의 이전 턴은 자동 캐시로 재사용한다.
             "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
             "messages": messages,
-            "output_config": {"effort": effort, "format": {"type": "json_schema", "schema": schema}},
+            "output_config": {"format": {"type": "json_schema", "schema": schema}},
             "cache_control": {"type": "ephemeral"},
         }
+        features = model_features(self.config.model)
+        if "effort" in features:
+            kwargs["output_config"]["effort"] = effort
         if tools:
             kwargs["tools"] = tools
-        if self.config.use_fallbacks:
+        if self.config.use_fallbacks and "fallbacks" in features:
             kwargs["betas"] = [FALLBACK_BETA]
             kwargs["fallbacks"] = "default"
         try:
