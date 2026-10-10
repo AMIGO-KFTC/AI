@@ -16,12 +16,12 @@ def test_full_flow_stage_1_to_4(kb):
 
     stages = [e["stage"] for e in seen if e["type"] == "stage"]
     assert stages[:2] == ["analyzing", "summary"]
-    assert {e["key"] for e in seen if e["type"] == "slot"} == {"duties", "recurring", "projects", "contacts", "systems", "issues"}
+    assert {e["key"] for e in seen if e["type"] == "slot"} == {"overview", "stakeholders", "regular", "irregular", "systems", "dept_notes"}
     assert kinds(result) == ["summary", "question"]
     snap = result.snapshot
     assert snap["waiting"] and snap["stage"] == "qna" and snap["question_count"] == 1
-    assert snap["slots"]["duties"]["coverage"] == "sufficient"
-    assert any(c["label"] == "업무정의서.pdf p.1" for it in snap["slots"]["duties"]["items"] for c in it["citations"])
+    assert snap["slots"]["overview"]["coverage"] == "sufficient"
+    assert any(c["label"] == "업무정의서.pdf p.1" for it in snap["slots"]["overview"]["items"] for c in it["citations"])
 
     # 한 번에 하나의 질문: 질문 메시지에는 슬롯 하나와 gap_id 하나만 있다
     question = result.messages[-1]
@@ -52,7 +52,7 @@ def test_full_flow_stage_1_to_4(kb):
     version = snap["document_version"]
     doc = snap["document"]
     assert doc.startswith("# 업무 인수인계서")
-    for heading in ("## 2. 담당 업무", "## 5. 협업 관계", "## 8. 확인 필요 사항", "## 9. 근거 자료"):
+    for heading in ("## 2. 업무 소개", "## 3. 이해관계자", "## 4. 정기 업무", "## 8. 확인 필요 사항", "## 9. 근거 자료"):
         assert heading in doc
     assert "내선 2345" in doc
     assert "인계자 답변" in doc
@@ -71,7 +71,7 @@ def test_correction_overwrites_last_recorded_fields(kb):
     assert kinds(result) == ["confirm"]
     assert "내선 2346" in result.messages[0]["content"]
     agent.send_message("s2", "네", kb)
-    contacts = agent.snapshot("s2")["slots"]["contacts"]["items"]
+    contacts = agent.snapshot("s2")["slots"]["stakeholders"]["items"]
     finance = next(it for it in contacts if it["title"] == "재무팀")
     assert finance["fields"]["contact"] == "내선 2346"
     assert finance["confirmed"] is True
@@ -90,7 +90,7 @@ def test_repeated_corrections_stop_after_two_rounds(kb):
     assert kinds(second) == ["question"]
     assert second.messages[0]["content"].startswith("고쳐 주신 내용으로 반영해 둘게요.")
     assert not second.snapshot["pending"] and second.snapshot["question_count"] == 2
-    finance = next(it for it in second.snapshot["slots"]["contacts"]["items"] if it["title"] == "재무팀")
+    finance = next(it for it in second.snapshot["slots"]["stakeholders"]["items"] if it["title"] == "재무팀")
     assert finance["fields"]["contact"] == "내선 2347"
 
 def test_files_trigger_reanalysis_and_keep_user_answers(kb):
@@ -106,7 +106,7 @@ def test_files_trigger_reanalysis_and_keep_user_answers(kb):
         }
     )
     result = agent.notify_files("s3", kb, ["연락망.xlsx"])
-    contacts = result.snapshot["slots"]["contacts"]["items"]
+    contacts = result.snapshot["slots"]["stakeholders"]["items"]
     titles = {it["title"]: it for it in contacts}
     assert titles["정보보호팀"]["fields"]["contact"] == "내선 4567"
     assert titles["재무팀"]["fields"]["contact"] == "내선 2345"  # 재분석해도 인계자 답변은 유지

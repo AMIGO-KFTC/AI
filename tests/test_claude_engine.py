@@ -43,7 +43,7 @@ class FakeMessages:
         if system == ANALYSIS_SYSTEM:
             title = re.search(r"## 작성할 장: (.+)", messages[0]["content"]).group(1).strip()
             spec = next(s for s in SLOTS if s.title == title)
-            if spec.key == "contacts" and isinstance(last, str):
+            if spec.key == "stakeholders" and isinstance(last, str):
                 return response([tool_use("재무팀 담당자 연락처")], stop="tool_use")
             return response([text_block(analysis_payload(spec, messages))])
         if system == SUMMARY_SYSTEM:
@@ -53,14 +53,14 @@ class FakeMessages:
             if "새 메시지\n네" in user:
                 return response([text_block({"intent": "confirm", "updates": [], "resolved_gap_ids": [], "reply": "확인했습니다."})])
             gap_id = re.search(r"- id: (gap-\w+)", user).group(1)
-            item_id = re.search(r"id=(contacts-\w+) \| 재무팀", user).group(1)
+            item_id = re.search(r"id=(stakeholders-\w+) \| 재무팀", user).group(1)
             return response(
                 [
                     text_block(
                         {
                             "intent": "answer",
                             "updates": [
-                                {"slot": "contacts", "item_id": item_id, "title": "재무팀", "fields": [{"key": "contact", "value": "내선 2345"}], "evidence_ids": []}
+                                {"slot": "stakeholders", "item_id": item_id, "title": "재무팀", "fields": [{"key": "contact", "value": "내선 2345"}], "evidence_ids": []}
                             ],
                             "resolved_gap_ids": [gap_id],
                             "reply": "재무팀 박지훈 차장의 연락처를 내선 2345 로 정리했어요. 맞으면 '네', 고칠 부분이 있으면 말씀해 주세요.",
@@ -76,8 +76,8 @@ class FakeMessages:
 def analysis_payload(spec, messages):
     fields = {f.key: "" for f in spec.fields}
     first = dict(fields)
-    if spec.key == "contacts":
-        first.update(party="재무팀", person="박지훈 차장", role="대금 지급 협의")
+    if spec.key == "stakeholders":
+        first.update(party="재무팀", person="박지훈 차장", detail="대금 지급 협의")
         evidence = ["E1"] if "E1" in json.dumps([m["content"] for m in messages], ensure_ascii=False, default=str) else []
         items = [
             {"title": "재무팀", "fields": first, "evidence_ids": evidence + ["E99"]},
@@ -114,11 +114,11 @@ def test_claude_engine_end_to_end(kb):
     assert result.messages[0]["content"].startswith("자료 5건에서")
     assert "재무팀 박지훈 차장의 연락처" in result.messages[1]["content"]
 
-    contacts = snap["slots"]["contacts"]
+    contacts = snap["slots"]["stakeholders"]
     assert [it["title"] for it in contacts["items"]] == ["재무팀"]  # 근거 없는 항목은 버린다
     assert contacts["items"][0]["citations"][0]["label"].startswith("업무정의서.pdf")
     assert contacts["coverage"] == "partial"
-    assert snap["slots"]["duties"]["coverage"] == "sufficient"
+    assert snap["slots"]["overview"]["coverage"] == "sufficient"
 
     # 도구 호출(Function Calling) 루프: tool_use → 검색 결과 tool_result → 최종 JSON
     analysis_calls = [c for c in client.messages.calls if c["system"][0]["text"] == ANALYSIS_SYSTEM]
@@ -140,7 +140,7 @@ def test_claude_engine_end_to_end(kb):
     # 답변 해석 → 교차 확인 → 확인
     result = agent.send_message("c1", "재무팀은 내선 2345 로 연락하면 됩니다", kb)
     assert result.messages[0]["kind"] == "confirm"
-    item = result.snapshot["slots"]["contacts"]["items"][0]
+    item = result.snapshot["slots"]["stakeholders"]["items"][0]
     assert item["fields"]["contact"] == "내선 2345"
     assert any(c["label"].startswith("인계자 답변") for c in item["citations"])
     interpret_call = next(c for c in client.messages.calls if c["system"][0]["text"] == INTERPRET_SYSTEM)
@@ -151,7 +151,7 @@ def test_claude_engine_end_to_end(kb):
     doc = result.snapshot["document"]
     assert "홈페이지 운영 전반을 인계합니다." in doc
     assert "1. 11월 웹 접근성 인증 갱신" in doc
-    assert "| 재무팀 | 박지훈 차장 | 대금 지급 협의 | 내선 2345 |" in doc
+    assert "| 재무팀 | - | - | 박지훈 차장 | 내선 2345 | 대금 지급 협의 |" in doc
 
 
 def test_slot_output_models_are_strict():
@@ -184,9 +184,9 @@ def test_question_plan_drops_duplicates_and_orders(kb):
 
     engine = ClaudeEngine(AgentConfig(llm_mode="claude"), client=SimpleNamespace(beta=SimpleNamespace(messages=PlanMessages())))
     gaps = [
-        {"id": "gap-a", "slot": "contacts", "question": "업체 담당자는 누구인가요?", "priority": 1, "status": "open"},
-        {"id": "gap-b", "slot": "projects", "question": "입찰 공고 일정은 언제인가요?", "priority": 2, "status": "open"},
-        {"id": "gap-c", "slot": "issues", "question": "공고 일정이 조정됐나요?", "priority": 1, "status": "open"},
+        {"id": "gap-a", "slot": "stakeholders", "question": "업체 담당자는 누구인가요?", "priority": 1, "status": "open"},
+        {"id": "gap-b", "slot": "irregular", "question": "입찰 공고 일정은 언제인가요?", "priority": 2, "status": "open"},
+        {"id": "gap-c", "slot": "regular", "question": "공고 일정이 조정됐나요?", "priority": 1, "status": "open"},
     ]
     order, drops = engine.plan_questions(PROFILE, gaps)
     assert order == ["gap-b", "gap-a"] and drops == {"gap-c"}  # 모르는 id 는 무시, 중복은 한 번만

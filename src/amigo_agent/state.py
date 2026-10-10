@@ -188,8 +188,8 @@ def upsert_item(
     return existing
 
 
-def empty_slots() -> dict[str, SlotState]:
-    return {key: {"key": key, "items": [], "coverage": "missing", "summary": "", "note": ""} for key in SLOT_KEYS}
+def empty_slots(keys: tuple[str, ...] | list[str] | None = None) -> dict[str, SlotState]:
+    return {key: {"key": key, "items": [], "coverage": "missing", "summary": "", "note": ""} for key in (keys or SLOT_KEYS)}
 
 
 def open_gaps(gaps: list[Gap]) -> list[Gap]:

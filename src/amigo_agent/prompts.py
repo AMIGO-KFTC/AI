@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .state import Gap, SlotState, Turn
-from .template import COVERAGE_LABELS, SLOT_BY_KEY, SLOTS, SlotSpec
+from .template import COVERAGE_LABELS, MODE_LABELS, SLOT_BY_KEY, SLOTS, SlotSpec, mode_of
 
 ANALYSIS_SYSTEM = """\
 당신은 공공·금융기관의 업무 인수인계서 작성을 돕는 분석가입니다. 인계자가 올린 업무 자료(문서·메일·링크)를 근거로 인수인계서의 한 장(章)을 채웁니다.
@@ -25,6 +25,9 @@ ANALYSIS_SYSTEM = """\
   · 질문 하나에는 정보 하나만 묻습니다. 한 대상의 '담당자와 연락처'는 하나로 보지만, 여러 부서·여러 항목·'완료 여부와 파일과 일정'처럼 여러 가지를 한 질문에 묶지 않습니다.
   · 자료에서 확인한 맥락을 짧게 언급해 무엇을 묻는지 바로 알 수 있게 쓰고, 한 문장으로 끝냅니다.
   · 계약서·매뉴얼처럼 파일로 받는 편이 나은 정보면 ask_for_document 를 true 로 하되, question 은 파일이 없어도 답할 수 있게 핵심 내용을 묻습니다(예: '계약 기간과 월 금액이 어떻게 되나요?').
+- 업무 히스토리(주요 결정사항·협의사항)는 '무엇을 왜 그렇게 결정했는지'와 근거(메일·메신저·회의록)가 드러나게 씁니다. 자료에 없으면 gaps 로 남깁니다.
+- 질문은 인계자가 당시 상황을 떠올릴 수 있게 구체적인 업무·시점·상대를 들어 묻습니다(예: '차액 정산 방식을 지금처럼 정하기까지 어떤 논의가 있었나요?').
+- 시스템 ID·비밀번호·토큰 같은 민감 정보는 기록하지 않고 질문하지도 않습니다. 시스템 이름과 권한 신청 방법만 다룹니다.
 - 모든 문장은 한국어 존댓말로 씁니다.
 """
 
@@ -72,6 +75,7 @@ def profile_block(profile: dict[str, Any]) -> str:
     rows = [
         ("성명/직책", " ".join(x for x in (profile.get("name"), profile.get("position")) if x)),
         ("소속", profile.get("organization")),
+        ("인계 유형", MODE_LABELS[mode_of(profile)]),
         ("담당 업무(인계자 입력)", profile.get("duties")),
         ("인수자", profile.get("successor")),
         ("인계 예정일", profile.get("handover_date")),
@@ -99,7 +103,7 @@ def analysis_user(spec: SlotSpec, profile: dict[str, Any], evidence_text: str, m
 def items_block(slots: dict[str, SlotState], keys: list[str] | None = None) -> str:
     lines = []
     for spec in SLOTS:
-        if keys and spec.key not in keys:
+        if (keys and spec.key not in keys) or spec.key not in slots:
             continue
         slot = slots.get(spec.key) or {}
         coverage = COVERAGE_LABELS.get(slot.get("coverage", "missing"), "")
@@ -167,6 +171,8 @@ def summary_user(profile: dict[str, Any], slots: dict[str, SlotState], sources: 
     names = ", ".join(s.get("name", "") for s in sources[:12]) or "(자료 목록 없음)"
     lines = []
     for spec in SLOTS:
+        if spec.key not in slots:
+            continue
         slot = slots.get(spec.key) or {}
         coverage = COVERAGE_LABELS.get(slot.get("coverage", "missing"), "")
         lines.append(f"- {spec.title}: {coverage} / {slot.get('summary', '')}")
