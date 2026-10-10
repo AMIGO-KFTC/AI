@@ -10,7 +10,7 @@ from datetime import date
 from typing import Any
 
 from .state import Gap, SlotState, item_label
-from .template import SLOT_BY_KEY, SLOTS
+from .template import MODE_LABELS, SLOT_BY_KEY, mode_of, slots_for
 
 STATUS_LABEL = {"open": "미질문", "asked": "답변 대기", "answered": "확인 대기", "skipped": "인계자 미확인"}
 
@@ -37,6 +37,31 @@ class _Citations:
         return " ".join(f"[{n}]" for n in nums) or "-"
 
 
+HANDWRITTEN_BLANK = "ID: ________ / PW: ________"
+
+
+def _render_table(out: list[str], spec, items: list[dict], cites: _Citations) -> None:
+    headers = [f.label for f in spec.fields] + list(spec.handwritten) + ["근거"]
+    out.append("| " + " | ".join(headers) + " |")
+    out.append("|" + "|".join(["---"] * len(headers)) + "|")
+    for item in items:
+        fields = dict(item.get("fields") or {})
+        fields.setdefault(spec.title_field, item_label(spec, item))
+        cells = [_cell(fields.get(f.key)) for f in spec.fields] + [HANDWRITTEN_BLANK] * len(spec.handwritten)
+        out.append("| " + " | ".join(cells + [cites.refs(item)]) + " |")
+    out.append("")
+
+
+def _render_cards(out: list[str], spec, items: list[dict], cites: _Citations) -> None:
+    """필드가 많은 장은 항목마다 '항목 | 내용' 표로 보여 준다."""
+    for index, item in enumerate(items, start=1):
+        fields = dict(item.get("fields") or {})
+        fields.setdefault(spec.title_field, item_label(spec, item))
+        out += [f"### {index}) {_cell(fields.get(spec.title_field))}", "", "| 항목 | 내용 |", "|---|---|"]
+        out += [f"| {f.label} | {_cell(fields.get(f.key))} |" for f in spec.fields[1:]]
+        out += [f"| 근거 | {cites.refs(item)} |", ""]
+
+
 def render_document(
     *,
     profile: dict[str, Any],
@@ -50,6 +75,7 @@ def render_document(
     today = today or date.today()
     cites = _Citations()
     out: list[str] = ["# 업무 인수인계서", ""]
+    active = slots_for(profile)
 
     giver = " ".join(x for x in (profile.get("name"), profile.get("position")) if x) or "-"
     rows = [
@@ -57,6 +83,7 @@ def render_document(
         ("소속", profile.get("organization")),
         ("인수자", profile.get("successor")),
         ("인계 일자", profile.get("handover_date")),
+        ("인계 유형", MODE_LABELS[mode_of(profile)]),
         ("담당 업무", profile.get("duties")),
         ("작성", f"{today.isoformat()} · AMIGO 자동 작성 초안 v{version}"),
     ]
@@ -71,25 +98,20 @@ def render_document(
         out += [f"{i}. {p}" for i, p in enumerate(key_points, start=1)]
         out.append("")
 
-    for number, spec in enumerate(SLOTS, start=2):
+    for number, spec in enumerate(active, start=2):
         slot = slots.get(spec.key) or {}
         items = slot.get("items") or []
         out += [f"## {number}. {spec.title}", ""]
         if not items:
             out += ["확인된 내용이 없습니다. (아래 '확인 필요 사항' 참고)", ""]
             continue
-        headers = [f.label for f in spec.fields] + ["근거"]
-        out.append("| " + " | ".join(headers) + " |")
-        out.append("|" + "|".join(["---"] * len(headers)) + "|")
-        for item in items:
-            fields = dict(item.get("fields") or {})
-            fields.setdefault(spec.title_field, item_label(spec, item))
-            cells = [_cell(fields.get(f.key)) for f in spec.fields]
-            out.append("| " + " | ".join(cells + [cites.refs(item)]) + " |")
-        out.append("")
+        if spec.layout == "card":
+            _render_cards(out, spec, items, cites)
+        else:
+            _render_table(out, spec, items, cites)
 
     pending = [g for g in gaps if g.get("status") in STATUS_LABEL]
-    out += [f"## {len(SLOTS) + 2}. 확인 필요 사항", ""]
+    out += [f"## {len(active) + 2}. 확인 필요 사항", ""]
     if pending:
         for gap in pending:
             title = SLOT_BY_KEY[gap["slot"]].title if gap.get("slot") in SLOT_BY_KEY else "기타"
@@ -98,7 +120,7 @@ def render_document(
         out.append("- 없음")
     out.append("")
 
-    out += [f"## {len(SLOTS) + 3}. 근거 자료", ""]
+    out += [f"## {len(active) + 3}. 근거 자료", ""]
     if cites.entries:
         for num, label, quote in cites.entries:
             out.append(f"{num}. {label}" + (f' — "{quote}"' if quote else ""))

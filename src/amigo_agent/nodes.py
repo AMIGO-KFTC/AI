@@ -40,7 +40,7 @@ from .state import (
     turn,
     upsert_item,
 )
-from .template import COVERAGE_LABELS, SLOT_BY_KEY, SLOT_KEYS, SLOTS, STAGE_LABEL, STAGE_NUMBER
+from .template import COVERAGE_LABELS, SLOT_BY_KEY, STAGE_LABEL, STAGE_NUMBER, slots_for
 
 logger = logging.getLogger(__name__)
 
@@ -99,11 +99,12 @@ def _slot_with_gaps(result: SlotResult) -> dict[str, Any]:
 def prepare(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     _stage("analyzing")
     sources = runtime.context.kb.list_sources()
-    _progress(f"자료 {len(sources)}건을 분석하고 있어요.", current=0, total=len(SLOTS))
+    active = [s.key for s in slots_for(state.get("profile"))]
+    _progress(f"자료 {len(sources)}건을 분석하고 있어요.", current=0, total=len(active))
     return {
         "stage": "analyzing",
         "sources": sources,
-        "slots": empty_slots(),
+        "slots": empty_slots(active),
         "gaps": [],
         "question_count": 0,
         "document": "",
@@ -118,7 +119,7 @@ def prepare(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]
 
 def fan_out(state: AgentState) -> list[Send]:
     """슬롯별 분석을 병렬로 실행한다(LangGraph Send 를 이용한 map-reduce)."""
-    return [Send("analyze_slot", {"slot_key": key, "profile": state.get("profile", {})}) for key in SLOT_KEYS]
+    return [Send("analyze_slot", {"slot_key": key, "profile": state.get("profile", {})}) for key in (s.key for s in slots_for(state.get("profile")))]
 
 
 def analyze_slot(payload: dict[str, Any], runtime: Runtime[AgentContext]) -> dict[str, Any]:
@@ -134,7 +135,8 @@ def analyze_slot(payload: dict[str, Any], runtime: Runtime[AgentContext]) -> dic
 
 def collect_gaps(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     gaps: list[Gap] = []
-    for key in SLOT_KEYS:
+    active = slots_for(state.get("profile"))
+    for key in (s.key for s in active):
         gaps.extend(copy.deepcopy((state.get("slots") or {}).get(key, {}).get("proposed_gaps", [])))
     ordered = open_gaps(gaps)
     try:  # 장마다 따로 만든 질문 후보에서 중복을 빼고 전체 순서를 정한다
@@ -147,7 +149,7 @@ def collect_gaps(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str,
     for g in planned:
         if g["id"] in ranks:
             g["rank"] = ranks[g["id"]]
-    _progress("자료 분석을 마쳤어요.", current=len(SLOTS), total=len(SLOTS))
+    _progress("자료 분석을 마쳤어요.", current=len(active), total=len(active))
     return {"gaps": open_gaps(planned)}
 
 
@@ -163,7 +165,7 @@ def summarize(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
     except LLMOutputError:
         narrative = _offline(ctx).summarize(state.get("profile", {}), slots, gaps, sources)
     lines = []
-    for spec in SLOTS:
+    for spec in slots_for(state.get("profile")):
         slot = slots.get(spec.key) or {}
         coverage = slot.get("coverage", "missing")
         icon = {"sufficient": "🟢", "partial": "🟡", "missing": "🔴"}.get(coverage, "⚪")
@@ -180,7 +182,7 @@ def summarize(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
     else:
         closing = "자료만으로 필요한 정보가 충족되었어요. 바로 인수인계서를 작성할게요."
     message = f"{narrative}\n\n" + "\n".join(lines) + f"\n\n{closing}"
-    coverage = {k: (slots.get(k) or {}).get("coverage", "missing") for k in SLOT_KEYS}
+    coverage = {k: (slots.get(k) or {}).get("coverage", "missing") for k in (s.key for s in slots_for(state.get("profile")))}
     summary_turn = _say("summary", message, coverage=coverage)
     return {"stage": "qna", "transcript": [summary_turn]}
 
@@ -407,7 +409,7 @@ def reanalyze(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
     _progress(f"새 자료 {len(names)}건을 분석에 반영하고 있어요.", status="running")
     slots = copy.deepcopy(state.get("slots") or {})
     gaps = copy.deepcopy(state.get("gaps") or [])
-    targets = list(SLOT_KEYS)  # 새 자료는 어느 장에든 정보를 더할 수 있으므로 전체를 다시 본다
+    targets = [s.key for s in slots_for(state.get("profile"))]  # 새 자료는 어느 장에든 정보를 더할 수 있으므로 전체를 다시 본다
 
     with ThreadPoolExecutor(max_workers=max(1, ctx.config.max_concurrency)) as pool:
         results = dict(zip(targets, pool.map(lambda k: _analyze(ctx, k, state.get("profile", {})), targets)))

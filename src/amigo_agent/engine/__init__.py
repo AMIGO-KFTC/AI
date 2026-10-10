@@ -60,7 +60,7 @@ def retrieve_for_slot(spec: SlotSpec, profile: dict[str, Any], kb: KBAdapter, to
     """슬롯의 기본 검색어들로 근거를 모은다(중복 제거, 점수순)."""
     queries = list(spec.queries)
     duties = str(profile.get("duties") or "").strip()
-    if duties and spec.key in ("duties", "projects"):
+    if duties and spec.key in ("overview", "irregular"):
         queries.insert(0, duties)
     seen: dict[str, Evidence] = {}
     for query in queries:
