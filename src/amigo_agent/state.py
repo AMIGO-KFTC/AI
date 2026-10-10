@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Annotated, Any, TypedDict
 
-from .template import SLOT_BY_KEY, SLOT_KEYS, SlotSpec
+from .template import SLOT_BY_KEY, SLOT_KEYS, SlotSpec, slot_keys_for_mode
 
 
 class Citation(TypedDict, total=False):
@@ -47,6 +47,7 @@ class Gap(TypedDict, total=False):
     priority: int  # 1(높음) ~ 3(낮음)
     rank: int  # 질문 계획(Claude)이 정한 전체 순서. 없으면 priority·장 순서로 정렬
     ask_for_document: bool
+    field: str  # 회상 질문이 채울 항목 필드 키(없으면 빈 값)
     status: str  # open | asked | answered | resolved | skipped
 
 
@@ -188,8 +189,8 @@ def upsert_item(
     return existing
 
 
-def empty_slots() -> dict[str, SlotState]:
-    return {key: {"key": key, "items": [], "coverage": "missing", "summary": "", "note": ""} for key in SLOT_KEYS}
+def empty_slots(mode: str | None = None) -> dict[str, SlotState]:
+    return {key: {"key": key, "items": [], "coverage": "missing", "summary": "", "note": ""} for key in slot_keys_for_mode(mode)}
 
 
 def open_gaps(gaps: list[Gap]) -> list[Gap]:

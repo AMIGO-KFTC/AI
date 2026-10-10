@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .state import Gap, SlotState, Turn
-from .template import COVERAGE_LABELS, SLOT_BY_KEY, SLOTS, SlotSpec
+from .template import COVERAGE_LABELS, SLOT_BY_KEY, SlotSpec, normalize_mode, slots_for_mode
 
 ANALYSIS_SYSTEM = """\
 당신은 공공·금융기관의 업무 인수인계서 작성을 돕는 분석가입니다. 인계자가 올린 업무 자료(문서·메일·링크)를 근거로 인수인계서의 한 장(章)을 채웁니다.
@@ -25,6 +25,9 @@ ANALYSIS_SYSTEM = """\
   · 질문 하나에는 정보 하나만 묻습니다. 한 대상의 '담당자와 연락처'는 하나로 보지만, 여러 부서·여러 항목·'완료 여부와 파일과 일정'처럼 여러 가지를 한 질문에 묶지 않습니다.
   · 자료에서 확인한 맥락을 짧게 언급해 무엇을 묻는지 바로 알 수 있게 쓰고, 한 문장으로 끝냅니다.
   · 계약서·매뉴얼처럼 파일로 받는 편이 나은 정보면 ask_for_document 를 true 로 하되, question 은 파일이 없어도 답할 수 있게 핵심 내용을 묻습니다(예: '계약 기간과 월 금액이 어떻게 되나요?').
+- 업무 히스토리가 핵심입니다. 정기·비정기 업무의 '주요 결정사항(근거 포함)', '주요 협의사항'은 메일·회의록·메신저 같은 자료에서 찾아 근거와 함께 적습니다. 자료에 없으면 gaps 의 회상 질문(priority low)으로 남깁니다.
+  · 회상 질문은 '중요한 결정이 있었나요?' 같은 포괄 질문이 아니라, 구체적인 장면(방식을 바꾼 적, 예외로 처리한 적, 후임자가 놓치기 쉬운 점)을 떠올리게 묻습니다. 장 설명의 회상 질문 예시를 업무명에 맞게 고쳐 씁니다.
+- 아이디·비밀번호는 절대 기록하지 않습니다. 자료에 있어도 필드에 옮기지 않고, 시스템 이름·권한 수준·신청 방법만 적습니다.
 - 모든 문장은 한국어 존댓말로 씁니다.
 """
 
@@ -33,6 +36,8 @@ INTERPRET_SYSTEM = """\
 
 원칙
 - 인계자가 말한 사실만 기록하고, 말하지 않은 내용을 지어내지 않습니다.
+- 아이디·비밀번호는 필드에 기록하지 않습니다. 인계자가 말하더라도 무시하고, 출력본에 직접 적어 달라고 안내합니다.
+- 관계(relation)는 요청·협의·보고 중 하나로, 구분(side)은 내부·외부 중 하나로 적습니다.
 - intent: answer(새 정보 제공), confirm(직전에 정리한 내용이 맞다고 함), correct(직전에 정리한 내용을 고침), skip(모름·건너뛰기), finish(문서 생성·종료 요청), question(인계자가 되묻거나 의미를 확인함), other(그 밖의 말).
 - 답변이 자료와 다르거나 자료를 확인해야 하면 search_documents 로 확인합니다. 내용이 다르면 reply 에서 정중하게 어느 쪽이 맞는지 확인을 요청합니다.
 - updates: 기존 항목을 고치면 그 item_id 를 쓰고, 새 항목이면 item_id 를 빈 문자열로 둡니다. fields 에는 해당 장의 필드 키만 씁니다. 검색 결과를 근거로 썼으면 evidence_ids 에 E 번호를 적습니다.
@@ -62,16 +67,24 @@ SUMMARY_SYSTEM = """\
 
 COMPOSE_SYSTEM = """\
 당신은 업무 인수인계서 편집자입니다. 정리된 항목을 바탕으로 문서 앞부분에 들어갈 '업무 개요'와 '인수자 핵심 당부사항'을 씁니다.
-- overview: 3~5문장. 인계자의 역할과 업무 범위, 현재 진행 상황을 요약합니다.
+- overview: 단위 업무의 소개를 정확히 3문장(3줄)으로 씁니다. 어떤 업무인지, 누구와 어떤 일을 하는지, 지금 진행 상황을 담습니다.
 - key_points: 인수자가 첫 한 달 안에 반드시 챙길 일 3~5개. 한 줄씩, 기한·대상을 포함합니다.
 - 제공된 항목에 없는 내용은 쓰지 않습니다. 존댓말이 아닌 평서형(~함, ~필요)으로 씁니다.
 """
 
 
+MODE_NOTES = {
+    "transfer": "인사발령(전체 양식: 업무 소개·이해관계자·정기/비정기 업무·시스템 접근 계정·부서별 특이사항)",
+    "leave": "장기휴가(Light 양식: 업무 소개·정기 업무·이해관계자·시스템 접근 계정만. 간결하게 묻는다)",
+}
+
+
 def profile_block(profile: dict[str, Any]) -> str:
     rows = [
+        ("인계 유형", MODE_NOTES.get(normalize_mode(profile.get("mode")))),
+        ("단위 업무명", profile.get("task_name")),
         ("성명/직책", " ".join(x for x in (profile.get("name"), profile.get("position")) if x)),
-        ("소속", profile.get("organization")),
+        ("소속(부서)", profile.get("organization")),
         ("담당 업무(인계자 입력)", profile.get("duties")),
         ("인수자", profile.get("successor")),
         ("인계 예정일", profile.get("handover_date")),
@@ -81,9 +94,11 @@ def profile_block(profile: dict[str, Any]) -> str:
 
 def slot_spec_block(spec: SlotSpec) -> str:
     fields = "\n".join(f"- {f.key}({f.label}){': ' + f.hint if f.hint else ''}" for f in spec.fields)
+    recall = "\n".join(f"- {key}({spec.label(key)}): {question}" for key, question in spec.recall)
     return (
         f"## 작성할 장: {spec.title}\n{spec.description}\n\n필드:\n{fields}\n"
         f"필수 필드: {', '.join(spec.required)} / 최소 항목 수: {spec.min_items}"
+        + (f"\n\n회상 질문 예시(해당 필드가 비면 낮은 우선순위의 gaps 로 추가):\n{recall}" if recall else "")
     )
 
 
@@ -96,9 +111,9 @@ def analysis_user(spec: SlotSpec, profile: dict[str, Any], evidence_text: str, m
     )
 
 
-def items_block(slots: dict[str, SlotState], keys: list[str] | None = None) -> str:
+def items_block(slots: dict[str, SlotState], keys: list[str] | None = None, mode: str | None = None) -> str:
     lines = []
-    for spec in SLOTS:
+    for spec in slots_for_mode(mode):
         if keys and spec.key not in keys:
             continue
         slot = slots.get(spec.key) or {}
@@ -153,7 +168,7 @@ def interpret_user(
     return (
         f"## 인계자 정보\n{profile_block(profile)}\n\n## 진행 단계\n{stage_note}\n\n"
         f"## 현재 질문\n{gap_text}\n\n## 확인 대기 중인 정리 내용\n{pending_text or '(없음)'}\n\n"
-        f"## 현재까지 정리된 항목\n{items_block(slots)}\n\n## 남은 질문\n{gaps_block(open_gaps)}\n\n"
+        f"## 현재까지 정리된 항목\n{items_block(slots, mode=profile.get('mode'))}\n\n## 남은 질문\n{gaps_block(open_gaps)}\n\n"
         f"## 최근 대화\n{transcript_block(transcript)}\n\n## 인계자의 새 메시지\n{message}"
     )
 
@@ -166,7 +181,7 @@ def plan_user(profile: dict[str, Any], gaps: list[Gap]) -> str:
 def summary_user(profile: dict[str, Any], slots: dict[str, SlotState], sources: list[dict]) -> str:
     names = ", ".join(s.get("name", "") for s in sources[:12]) or "(자료 목록 없음)"
     lines = []
-    for spec in SLOTS:
+    for spec in slots_for_mode(profile.get("mode")):
         slot = slots.get(spec.key) or {}
         coverage = COVERAGE_LABELS.get(slot.get("coverage", "missing"), "")
         lines.append(f"- {spec.title}: {coverage} / {slot.get('summary', '')}")
@@ -174,4 +189,4 @@ def summary_user(profile: dict[str, Any], slots: dict[str, SlotState], sources: 
 
 
 def compose_user(profile: dict[str, Any], slots: dict[str, SlotState]) -> str:
-    return f"## 인계자 정보\n{profile_block(profile)}\n\n## 정리된 항목\n{items_block(slots)}"
+    return f"## 인계자 정보\n{profile_block(profile)}\n\n## 정리된 항목\n{items_block(slots, mode=profile.get('mode'))}"

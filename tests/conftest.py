@@ -96,6 +96,8 @@ PROFILE = {
     "position": "과장",
     "organization": "디지털전략부 웹서비스팀",
     "duties": "기관 홈페이지 운영",
+    "task_name": "홈페이지 운영",
+    "mode": "transfer",
     "successor": "이서연 대리",
     "handover_date": "2026-10-15",
 }

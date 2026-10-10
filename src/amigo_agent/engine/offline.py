@@ -12,12 +12,14 @@ from typing import Any
 from ..config import AgentConfig
 from ..kb import Evidence, KBAdapter
 from ..state import Gap, SlotItem, SlotState, evaluate_coverage, item_label, missing_fields, new_id, upsert_item
-from ..template import COVERAGE_LABELS, SLOT_BY_KEY, SLOTS, SlotSpec
+from ..template import COVERAGE_LABELS, SLOT_BY_KEY, SlotSpec, normalize_mode, slots_for_mode
 from ..textkit import (
     extract_contacts,
     extract_parties,
     extract_person,
     infer_cycle,
+    infer_relation,
+    infer_side,
     josa,
     short_title,
     strip_list_mark,
@@ -27,58 +29,75 @@ from . import Interpretation, InterpretInput, SlotResult, retrieve_for_slot
 # 표 머리글 → 슬롯 필드 매핑
 HEADER_SYNONYMS: dict[str, dict[str, tuple[str, ...]]] = {
     "duties": {
-        "name": ("업무명", "담당업무", "업무"),
-        "description": ("주요내용", "업무내용", "내용", "설명"),
-        "weight": ("비중", "중요도"),
-        "outputs": ("산출물", "관련문서"),
+        "name": ("단위업무명", "업무명", "담당업무", "업무"),
+        "description": ("업무소개", "주요내용", "업무내용", "내용", "설명"),
+        "guideline": ("업무지침", "지침"),
+        "law": ("관계법령", "법령", "근거법"),
+        "manual": ("업무매뉴얼", "매뉴얼"),
     },
-    "recurring": {
-        "name": ("업무명", "업무", "작업"),
-        "cycle": ("주기", "빈도"),
-        "timing": ("시기", "일정", "기한", "시점", "월"),
-        "procedure": ("처리절차", "절차", "방법"),
-        "related": ("관련부서", "관련시스템", "부서", "협조"),
-    },
-    "projects": {
-        "name": ("과제명", "과제", "프로젝트", "사업명"),
-        "status": ("진행현황", "현황", "진행상황", "상태", "진척"),
-        "schedule": ("일정", "마감", "기한", "완료예정"),
-        "next_steps": ("다음할일", "향후계획", "조치사항", "다음단계", "할일"),
-        "stakeholders": ("관련자", "관련부서", "담당자", "담당"),
-    },
-    "contacts": {
-        "party": ("부서", "기관", "업체", "소속", "협업대상"),
+    "stakeholders": {
+        "party": ("부서", "기관", "업체", "소속", "협업대상", "이해관계자"),
+        "side": ("구분", "내외부"),
+        "relation": ("관계", "관계유형"),
         "person": ("담당자", "성명", "이름", "담당"),
         "role": ("협업내용", "역할", "업무"),
         "contact": ("연락처", "전화", "내선", "이메일", "메일"),
+        "note": ("관계메모", "메모", "특이사항"),
     },
-    "systems": {
+    "recurring": {
+        "name": ("세부업무명", "업무명", "업무", "작업"),
+        "intro": ("소개",),
+        "cycle": ("주기", "빈도"),
+        "timing": ("시기", "일정", "기한", "시점", "월"),
+        "procedure": ("수행절차", "처리절차", "절차", "방법"),
+        "key_points": ("중요하게봐야하는것", "유의사항", "확인사항"),
+        "decisions": ("주요결정사항", "결정사항", "결정"),
+        "consultations": ("주요협의사항", "협의사항"),
+        "future": ("발전시킬사항", "발전방향", "개선방향"),
+        "tips": ("추천팁", "팁", "요령"),
+        "wishes": ("후임자에게바라는점", "바라는점"),
+        "related": ("관련부서", "관련시스템", "부서", "협조"),
+    },
+    "projects": {
+        "name": ("세부업무명", "과제명", "과제", "프로젝트", "사업명"),
+        "background": ("소개및배경", "배경", "추진배경"),
+        "goal": ("목표", "목적"),
+        "schedule": ("진행일정", "일정", "마감", "기한", "완료예정"),
+        "progress": ("진행경과", "진행현황", "현황", "진행상황", "상태", "진척"),
+        "consultations": ("협의내용", "협의사항"),
+        "unresolved": ("미결과제", "다음할일", "향후계획", "조치사항", "다음단계", "할일"),
+        "key_points": ("중요하게봐야하는것", "유의사항"),
+        "decisions": ("주요결정사항", "결정사항"),
+        "wishes": ("후임자에게바라는점", "바라는점"),
+    },
+    "accounts": {
         "name": ("시스템명", "시스템", "도구"),
         "purpose": ("용도", "목적", "기능"),
         "access": ("권한수준", "권한", "계정유형"),
         "how_to_get": ("신청이관방법", "신청방법", "이관방법", "신청", "이관", "비고"),
     },
-    "issues": {
-        "title": ("이슈", "문제", "리스크", "위험"),
-        "status": ("현황", "상태"),
-        "action": ("대응방안", "대응", "조치", "유의사항"),
-        "due": ("기한", "마감"),
+    "dept": {
+        "topic": ("항목", "구분", "특이사항"),
+        "content": ("인계내용", "내용"),
+        "basis": ("근거지침", "근거", "지침", "세칙"),
     },
 }
 
 # 표가 해당 슬롯의 표로 인정되려면 제목 열 외에 이 중 하나 이상의 열이 있어야 한다
 COMPANION_FIELDS: dict[str, set[str]] = {
-    "duties": {"description", "weight", "outputs"},
+    "duties": {"description", "guideline", "law", "manual"},
+    "stakeholders": {"person", "contact", "role", "relation"},
     "recurring": {"cycle", "timing"},
-    "projects": {"status", "schedule", "next_steps"},
-    "contacts": {"person", "contact", "role"},
-    "systems": {"purpose", "access", "how_to_get"},
-    "issues": {"status", "action", "due"},
+    "projects": {"progress", "schedule", "unresolved", "background"},
+    "accounts": {"purpose", "access", "how_to_get"},
+    "dept": {"content", "basis"},
 }
 
-SENTENCE_FALLBACK_ONLY = {"duties", "systems", "projects"}
+SENTENCE_FALLBACK_ONLY = {"duties", "accounts", "projects"}
+RECALL_PER_ITEM = 2  # 항목마다 물어볼 회상 질문 수
+RECALL_ITEMS = 2  # 회상 질문을 만들 항목 수(질문이 너무 많아지지 않게)
 
-ISSUE_HINTS = re.compile(r"이슈|문제|미확정|확정된다|지연|만료|넘어|주의|반드시|리스크|필요하다|중지|늦어지면")
+DEPT_HINTS = re.compile(r"외주|가맹점|라이센스|라이선스|세부시행세칙|인수인계 지침")
 PROJECT_HINTS = re.compile(r"추진|예정|진행 중|진행중|검토 중|입찰|작성 중")
 SYSTEM_NAME_RE = re.compile(r"([A-Z][A-Za-z0-9]{1,15}(?:\s[A-Z][A-Za-z0-9]+)?|[가-힣A-Za-z]+시스템|[가-힣A-Za-z]+콘솔)")
 AFFIRM_RE = re.compile(r"^\s*(네|예|응|넵|맞아|맞습니다|맞아요|맞음|ㅇㅇ|좋아|좋습니다|좋아요|확인|그래|오케이|ok|yes)", re.I)
@@ -114,7 +133,7 @@ class OfflineEngine:
         items = slot["items"]
         slot["coverage"] = evaluate_coverage(spec, items)
         slot["summary"] = self._slot_summary(spec, items)
-        return SlotResult(slot=slot, gaps=self._gaps(spec, items, slot["coverage"]))
+        return SlotResult(slot=slot, gaps=self._gaps(spec, items, slot["coverage"], normalize_mode(profile.get("mode"))))
 
     def _add(self, slot: SlotState, title: str, fields: dict[str, str], ev: Evidence) -> None:
         if len(slot["items"]) >= 8 and not any(_norm(i.get("title", "")) == _norm(title) for i in slot["items"]):
@@ -187,8 +206,8 @@ class OfflineEngine:
             if not name:
                 name, timing = sentence, ""
             yield short_title(name, 40), {"name": short_title(name, 60), "cycle": cycle, "timing": timing.strip(), "procedure": name.strip()}
-        elif key == "contacts":
-            if not re.search(r"협의|협업|요청|연락|문의|관리", sentence):
+        elif key == "stakeholders":
+            if not re.search(r"협의|협업|요청|연락|문의|관리|보고", sentence):
                 return
             own = str(profile.get("organization") or "")
             sender = str(ev.metadata.get("sender_name") or "")
@@ -202,14 +221,22 @@ class OfflineEngine:
                 if sender and person.startswith(sender):
                     contact = contact or extract_contacts(str(ev.metadata.get("sender", "")))
                 role = re.sub(rf"^.*?{re.escape(party)}(\([^)]*\))?(과는|와는|과|와|에)?\s*", "", clause).strip(" ,.") or clause
-                yield party, {"party": party, "person": person, "role": short_title(role, 80), "contact": contact}
-        elif key == "issues":
-            if ISSUE_HINTS.search(sentence):
-                yield short_title(sentence, 30), {"title": short_title(sentence, 40), "action": sentence}
+                yield party, {
+                    "party": party,
+                    "side": infer_side(party, own),
+                    "relation": infer_relation(clause),
+                    "person": person,
+                    "role": short_title(role, 80),
+                    "contact": contact,
+                }
+        elif key == "dept":
+            if DEPT_HINTS.search(sentence):
+                topic = DEPT_HINTS.search(sentence).group(0)
+                yield topic, {"topic": topic, "content": sentence}
         elif key == "projects":
             if PROJECT_HINTS.search(sentence) and not sentence.startswith(("또한", "그리고")):
-                yield short_title(sentence, 30), {"name": short_title(sentence, 40), "status": sentence}
-        elif key == "systems":
+                yield short_title(sentence, 30), {"name": short_title(sentence, 40), "progress": sentence}
+        elif key == "accounts":
             match = SYSTEM_NAME_RE.search(sentence)
             if match and re.search(r"권한|계정|콘솔|접속|로그인", sentence):
                 yield match.group(1), {"name": match.group(1), "purpose": sentence}
@@ -224,8 +251,8 @@ class OfflineEngine:
         more = f" 외 {len(items) - 3}건" if len(items) > 3 else ""
         return f"{names}{more}"
 
-    def _gaps(self, spec: SlotSpec, items: list[SlotItem], coverage: str) -> list[Gap]:
-        priority = 1 if spec.key in ("contacts", "systems", "issues") else 2
+    def _gaps(self, spec: SlotSpec, items: list[SlotItem], coverage: str, mode: str = "transfer") -> list[Gap]:
+        priority = 1 if spec.key in ("stakeholders", "accounts") else 2
         if coverage == "missing":
             return [
                 {
@@ -235,7 +262,7 @@ class OfflineEngine:
                     "description": f"자료에서 {spec.title} 정보를 찾지 못함",
                     "question": spec.default_question,
                     "priority": priority,
-                    "ask_for_document": spec.key in ("systems", "contacts"),
+                    "ask_for_document": spec.key in ("accounts", "stakeholders"),
                     "status": "open",
                 }
             ]
@@ -259,7 +286,37 @@ class OfflineEngine:
                 }
             )
             if len(gaps) >= self.config.max_gaps_per_slot:
-                break
+                return gaps
+        return gaps + self._recall_gaps(spec, items, mode)
+
+    def _recall_gaps(self, spec: SlotSpec, items: list[SlotItem], mode: str) -> list[Gap]:
+        """업무 히스토리(결정 배경·협의·요령)는 자료에 잘 안 남으므로, 비어 있으면 회상 질문으로 묻는다(Light 모드는 생략)."""
+        if mode == "leave" or not spec.recall:
+            return []
+        gaps: list[Gap] = []
+        for item in items[:RECALL_ITEMS]:
+            fields = item.get("fields") or {}
+            asked = 0
+            for key, template in spec.recall:
+                if str(fields.get(key, "")).strip():
+                    continue
+                label = item_label(spec, item)
+                gaps.append(
+                    {
+                        "id": new_id("gap"),
+                        "slot": spec.key,
+                        "item_id": item["id"],
+                        "description": f"'{label}'의 {spec.label(key)} 정보 없음(업무 히스토리)",
+                        "question": template.format(name=label),
+                        "priority": 3,
+                        "ask_for_document": False,
+                        "status": "open",
+                        "field": key,
+                    }
+                )
+                asked += 1
+                if asked >= RECALL_PER_ITEM:
+                    break
         return gaps
 
     # ------------------------------------------------------------------ STAGE 2
@@ -292,7 +349,7 @@ class OfflineEngine:
         correcting = bool(data.pending) and bool(NEGATIVE_RE.match(text))
         if correcting:
             text = NEGATIVE_RE.sub("", text).lstrip(" ,.").strip() or text
-        slot_key = gap.get("slot") if gap else self._guess_slot(text)
+        slot_key = gap.get("slot") if gap else self._guess_slot(text, data.profile.get("mode"))
         spec = SLOT_BY_KEY[slot_key]
         slot = data.slots.get(slot_key) or {"key": slot_key, "items": []}
         target = None
@@ -307,8 +364,14 @@ class OfflineEngine:
         if correcting and target is not None:
             keys = (data.pending or {}).get("keys", {}).get(target["id"]) or missing_fields(spec, target) or [spec.fields[1].key]
             fields = self._correction_fields(spec, text, keys)
+        elif gap and gap.get("field") and target is not None:
+            fields = {gap["field"]: text}  # 회상 질문의 답은 해당 필드에 그대로 기록한다
         else:
             fields = self._fields_from_answer(spec, text, target)
+        if spec.key == "stakeholders" and not ((target or {}).get("fields") or {}).get("relation"):
+            fields.setdefault("relation", infer_relation(text))
+            fields.setdefault("side", infer_side(fields.get("party", ""), str(data.profile.get("organization") or "")))
+            fields = {k: v for k, v in fields.items() if v}
         title = item_label(spec, target) if target else short_title(text, 24)
         update = {"slot": spec.key, "item_id": target["id"] if target else "", "title": title, "fields": fields, "citations": []}
         lines = [f"- **{spec.label(k)}**: {v}" for k, v in fields.items() if v]
@@ -334,9 +397,9 @@ class OfflineEngine:
             fields[keys[0]] = text
         return fields
 
-    def _guess_slot(self, text: str) -> str:
-        best, best_hits = "issues", 0
-        for spec in SLOTS:
+    def _guess_slot(self, text: str, mode: str | None = None) -> str:
+        best, best_hits = "duties", 0
+        for spec in slots_for_mode(mode):
             hits = sum(1 for kw in spec.keywords if kw in text)
             if hits > best_hits:
                 best, best_hits = spec.key, hits
@@ -381,22 +444,26 @@ class OfflineEngine:
     def compose_extras(self, profile, slots) -> dict[str, Any]:
         name = profile.get("name") or "인계자"
         org = profile.get("organization") or ""
-        duties = profile.get("duties") or "담당 업무"
+        task = profile.get("task_name") or profile.get("duties") or "담당 업무"
         counts = {k: len(s.get("items", [])) for k, s in slots.items()}
         subject = name + (f" {profile['position']}" if profile.get("position") else "")
-        overview = (
-            f"{josa(subject, '은/는')} {org + '에서 ' if org else ''}"
-            f"{josa(duties, '을/를')} 담당해 왔습니다. 담당 업무 {counts.get('duties', 0)}건, 반복 업무 {counts.get('recurring', 0)}건, "
-            f"진행 중인 과제 {counts.get('projects', 0)}건을 인계하며, 주요 이슈 {counts.get('issues', 0)}건에 유의해야 합니다."
-        )
+        intro_items = (slots.get("duties") or {}).get("items") or []
+        described = next((i.get("fields", {}).get("description") for i in intro_items if i.get("fields", {}).get("description")), "")
+        lines = [
+            f"{josa(subject, '은/는')} {org + '에서 ' if org else ''}{josa(task, '을/를')} 담당해 왔습니다.",
+            described or f"{task} 업무를 단위 업무로 인계합니다.",
+            f"이해관계자 {counts.get('stakeholders', 0)}곳, 정기 업무 {counts.get('recurring', 0)}건"
+            + (f", 비정기 업무 {counts.get('projects', 0)}건" if "projects" in slots else "")
+            + "을 인계합니다.",
+        ]
         key_points: list[str] = []
-        for key in ("issues", "projects", "recurring"):
+        for key in ("projects", "recurring"):
             spec = SLOT_BY_KEY[key]
             for item in slots.get(key, {}).get("items", [])[:2]:
                 f = item.get("fields", {})
-                when = f.get("due") or f.get("schedule") or f.get("timing") or ""
+                when = f.get("schedule") or f.get("timing") or ""
                 key_points.append(f"{item_label(spec, item)}" + (f" ({when})" if when else ""))
-        return {"overview": overview, "key_points": key_points[:5]}
+        return {"overview": "\n".join(lines), "key_points": key_points[:5]}
 
 
 def coverage_line(spec: SlotSpec, slot: SlotState) -> str:

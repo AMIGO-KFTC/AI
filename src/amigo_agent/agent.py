@@ -10,7 +10,7 @@
 on_event 콜백은 진행 중 발생하는 이벤트를 즉시 받는다.
     {"type": "stage", "stage": "analyzing", "number": 1, "label": "자료 분석"}
     {"type": "progress", "message": "'협업 관계' 분석 중", ...}
-    {"type": "slot", "key": "contacts", "slot": {...}}
+    {"type": "slot", "key": "stakeholders", "slot": {...}}
     {"type": "message", "role": "assistant", "kind": "question", "content": "...", "meta": {...}}
     {"type": "document", "markdown": "...", "version": 1}
     {"type": "usage", "requests": 1, "input_tokens": 120, "output_tokens": 800, ..., "cost_usd": 0.0172}  # Claude 호출마다

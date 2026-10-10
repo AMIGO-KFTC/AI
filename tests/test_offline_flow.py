@@ -16,7 +16,7 @@ def test_full_flow_stage_1_to_4(kb):
 
     stages = [e["stage"] for e in seen if e["type"] == "stage"]
     assert stages[:2] == ["analyzing", "summary"]
-    assert {e["key"] for e in seen if e["type"] == "slot"} == {"duties", "recurring", "projects", "contacts", "systems", "issues"}
+    assert {e["key"] for e in seen if e["type"] == "slot"} == {"duties", "stakeholders", "recurring", "projects", "accounts", "dept"}
     assert kinds(result) == ["summary", "question"]
     snap = result.snapshot
     assert snap["waiting"] and snap["stage"] == "qna" and snap["question_count"] == 1
@@ -52,7 +52,7 @@ def test_full_flow_stage_1_to_4(kb):
     version = snap["document_version"]
     doc = snap["document"]
     assert doc.startswith("# 업무 인수인계서")
-    for heading in ("## 2. 담당 업무", "## 5. 협업 관계", "## 8. 확인 필요 사항", "## 9. 근거 자료"):
+    for heading in ("## 1. 업무 소개", "## 2. 이해관계자", "## 3. 정기 업무", "## 4. 비정기 업무", "## 5. 시스템 접근 계정", "## 6. 부서별 특이사항", "## 7. 확인 필요 사항", "## 8. 근거 자료"):
         assert heading in doc
     assert "내선 2345" in doc
     assert "인계자 답변" in doc
@@ -71,7 +71,7 @@ def test_correction_overwrites_last_recorded_fields(kb):
     assert kinds(result) == ["confirm"]
     assert "내선 2346" in result.messages[0]["content"]
     agent.send_message("s2", "네", kb)
-    contacts = agent.snapshot("s2")["slots"]["contacts"]["items"]
+    contacts = agent.snapshot("s2")["slots"]["stakeholders"]["items"]
     finance = next(it for it in contacts if it["title"] == "재무팀")
     assert finance["fields"]["contact"] == "내선 2346"
     assert finance["confirmed"] is True
@@ -90,7 +90,7 @@ def test_repeated_corrections_stop_after_two_rounds(kb):
     assert kinds(second) == ["question"]
     assert second.messages[0]["content"].startswith("고쳐 주신 내용으로 반영해 둘게요.")
     assert not second.snapshot["pending"] and second.snapshot["question_count"] == 2
-    finance = next(it for it in second.snapshot["slots"]["contacts"]["items"] if it["title"] == "재무팀")
+    finance = next(it for it in second.snapshot["slots"]["stakeholders"]["items"] if it["title"] == "재무팀")
     assert finance["fields"]["contact"] == "내선 2347"
 
 def test_files_trigger_reanalysis_and_keep_user_answers(kb):
@@ -106,7 +106,7 @@ def test_files_trigger_reanalysis_and_keep_user_answers(kb):
         }
     )
     result = agent.notify_files("s3", kb, ["연락망.xlsx"])
-    contacts = result.snapshot["slots"]["contacts"]["items"]
+    contacts = result.snapshot["slots"]["stakeholders"]["items"]
     titles = {it["title"]: it for it in contacts}
     assert titles["정보보호팀"]["fields"]["contact"] == "내선 4567"
     assert titles["재무팀"]["fields"]["contact"] == "내선 2345"  # 재분석해도 인계자 답변은 유지
@@ -153,3 +153,62 @@ def test_mermaid_diagram_lists_stages():
     diagram = HandoverAgent().mermaid()
     for node in ("prepare", "analyze_slot", "summarize", "ask", "wait_user", "interpret", "compose"):
         assert node in diagram
+
+
+def test_passwords_are_never_stored(kb):
+    """보안 서약: 비밀번호 값은 대화·지식베이스·문서 어디에도 남기지 않고, 수기 작성을 안내한다."""
+    agent = HandoverAgent()
+    agent.start("pw", PROFILE, kb)
+    result = agent.send_message("pw", "재무팀 박지훈 차장 내선 2345, CMS 비밀번호는 Abcd1234! 입니다", kb)
+    assert any("직접 적어 주세요" in m["content"] for m in result.messages)
+    assert all("Abcd1234" not in m["content"] for m in result.messages)
+    assert kb.added and all("Abcd1234" not in t for t in kb.added)
+    assert "Abcd1234" not in str(result.snapshot)
+
+
+def test_scrub_credentials_keeps_descriptions():
+    from amigo_agent.textkit import scrub_credentials
+
+    assert scrub_credentials("GA 비밀번호는 보안USB에 보관")[1] is False
+    clean, found = scrub_credentials("ID는 admin, PW: p@ssw0rd 입니다")
+    assert found and "p@ssw0rd" not in clean
+
+
+def test_recall_questions_ask_about_history_after_required_gaps(kb):
+    agent = HandoverAgent()
+    result = agent.start("rc", PROFILE, kb)
+    gaps = result.snapshot["gaps"]
+    recall = [g for g in gaps if g.get("field")]
+    assert recall and all(g["priority"] == 3 for g in recall)
+    assert any(g["slot"] == "recurring" and g["field"] == "decisions" and "왜 그렇게 정했는지" in g["question"] for g in recall)
+    # 회상 질문은 필수 항목 질문보다 뒤에 온다
+    ranked = [g["priority"] for g in gaps]
+    assert ranked == sorted(ranked)
+
+
+def test_recall_answer_is_recorded_in_its_field(kb):
+    agent = HandoverAgent()
+    agent.start("rc2", PROFILE, kb)
+    for _ in range(12):
+        snap = agent.snapshot("rc2")
+        gap = next(g for g in snap["gaps"] if g["id"] == snap["current_gap_id"])
+        if gap.get("field") == "decisions":
+            break
+        agent.skip("rc2", kb)
+    else:
+        raise AssertionError("회상 질문(decisions)에 도달하지 못함")
+    result = agent.send_message("rc2", "수기 대사를 없애고 자동 대사로 바꿨어요. 오류가 잦아서요", kb)
+    assert result.messages[0]["kind"] == "confirm"
+    item = next(it for it in result.snapshot["slots"]["recurring"]["items"] if it["id"] == gap["item_id"])
+    assert "자동 대사" in item["fields"]["decisions"]
+
+
+def test_leave_mode_flow_is_light(kb):
+    agent = HandoverAgent()
+    result = agent.start("lv", {**PROFILE, "mode": "leave"}, kb)
+    snap = result.snapshot
+    assert set(snap["slots"]) == {"duties", "stakeholders", "recurring", "accounts"}
+    assert not any(g.get("field") for g in snap["gaps"])  # 회상 질문은 인사발령 모드에서만
+    result = agent.finish("lv", kb)
+    doc = result.snapshot["document"]
+    assert "| 인계 유형 | 장기휴가 (Light) |" in doc and "비정기 업무" not in doc

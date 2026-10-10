@@ -40,7 +40,17 @@ from .state import (
     turn,
     upsert_item,
 )
-from .template import COVERAGE_LABELS, SLOT_BY_KEY, SLOT_KEYS, SLOTS, STAGE_LABEL, STAGE_NUMBER
+from .template import (
+    COVERAGE_LABELS,
+    MODE_MAX_QUESTIONS,
+    SLOT_BY_KEY,
+    STAGE_LABEL,
+    STAGE_NUMBER,
+    normalize_mode,
+    slot_keys_for_mode,
+    slots_for_mode,
+)
+from .textkit import CREDENTIAL_MASK, scrub_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +84,16 @@ def _say(kind: str, content: str, **meta: Any) -> Turn:
     return turn("assistant", kind, content)
 
 
+def _keys(profile: dict[str, Any] | None) -> tuple[str, ...]:
+    """인수인계 유형(인사발령/장기휴가)에 따라 작성할 장 목록이 달라진다."""
+    return slot_keys_for_mode((profile or {}).get("mode"))
+
+
+def _max_questions(state: AgentState, config: AgentConfig) -> int:
+    mode = normalize_mode((state.get("profile") or {}).get("mode"))
+    return min(config.max_questions, MODE_MAX_QUESTIONS.get(mode, config.max_questions))
+
+
 def _offline(ctx: AgentContext) -> OfflineEngine:
     return OfflineEngine(ctx.config)
 
@@ -99,11 +119,11 @@ def _slot_with_gaps(result: SlotResult) -> dict[str, Any]:
 def prepare(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     _stage("analyzing")
     sources = runtime.context.kb.list_sources()
-    _progress(f"자료 {len(sources)}건을 분석하고 있어요.", current=0, total=len(SLOTS))
+    _progress(f"자료 {len(sources)}건을 분석하고 있어요.", current=0, total=len(_keys(state.get("profile"))))
     return {
         "stage": "analyzing",
         "sources": sources,
-        "slots": empty_slots(),
+        "slots": empty_slots((state.get("profile") or {}).get("mode")),
         "gaps": [],
         "question_count": 0,
         "document": "",
@@ -118,7 +138,7 @@ def prepare(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]
 
 def fan_out(state: AgentState) -> list[Send]:
     """슬롯별 분석을 병렬로 실행한다(LangGraph Send 를 이용한 map-reduce)."""
-    return [Send("analyze_slot", {"slot_key": key, "profile": state.get("profile", {})}) for key in SLOT_KEYS]
+    return [Send("analyze_slot", {"slot_key": key, "profile": state.get("profile", {})}) for key in _keys(state.get("profile"))]
 
 
 def analyze_slot(payload: dict[str, Any], runtime: Runtime[AgentContext]) -> dict[str, Any]:
@@ -134,7 +154,7 @@ def analyze_slot(payload: dict[str, Any], runtime: Runtime[AgentContext]) -> dic
 
 def collect_gaps(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     gaps: list[Gap] = []
-    for key in SLOT_KEYS:
+    for key in _keys(state.get("profile")):
         gaps.extend(copy.deepcopy((state.get("slots") or {}).get(key, {}).get("proposed_gaps", [])))
     ordered = open_gaps(gaps)
     try:  # 장마다 따로 만든 질문 후보에서 중복을 빼고 전체 순서를 정한다
@@ -147,7 +167,7 @@ def collect_gaps(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str,
     for g in planned:
         if g["id"] in ranks:
             g["rank"] = ranks[g["id"]]
-    _progress("자료 분석을 마쳤어요.", current=len(SLOTS), total=len(SLOTS))
+    _progress("자료 분석을 마쳤어요.", current=len(_keys(state.get("profile"))), total=len(_keys(state.get("profile"))))
     return {"gaps": open_gaps(planned)}
 
 
@@ -163,7 +183,7 @@ def summarize(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
     except LLMOutputError:
         narrative = _offline(ctx).summarize(state.get("profile", {}), slots, gaps, sources)
     lines = []
-    for spec in SLOTS:
+    for spec in slots_for_mode(state.get("profile", {}).get("mode")):
         slot = slots.get(spec.key) or {}
         coverage = slot.get("coverage", "missing")
         icon = {"sufficient": "🟢", "partial": "🟡", "missing": "🔴"}.get(coverage, "⚪")
@@ -174,13 +194,13 @@ def summarize(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
     remaining = len(open_gaps(gaps))
     if remaining:
         closing = (
-            f"부족한 부분을 채우기 위해 **한 번에 하나씩** 질문드릴게요(최대 {min(remaining, ctx.config.max_questions)}개). "
+            f"부족한 부분을 채우기 위해 **한 번에 하나씩** 질문드릴게요(최대 {min(remaining, _max_questions(state, ctx.config))}개). "
             "모르는 내용은 '건너뛰기', 관련 파일이 있으면 언제든 첨부해 주세요."
         )
     else:
         closing = "자료만으로 필요한 정보가 충족되었어요. 바로 인수인계서를 작성할게요."
     message = f"{narrative}\n\n" + "\n".join(lines) + f"\n\n{closing}"
-    coverage = {k: (slots.get(k) or {}).get("coverage", "missing") for k in SLOT_KEYS}
+    coverage = {k: (slots.get(k) or {}).get("coverage", "missing") for k in _keys(state.get("profile"))}
     summary_turn = _say("summary", message, coverage=coverage)
     return {"stage": "qna", "transcript": [summary_turn]}
 
@@ -190,7 +210,7 @@ def choose_next(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, 
     if state.get("finish_requested"):
         return {"next_action": "compose"}
     remaining = open_gaps(state.get("gaps") or [])
-    if remaining and state.get("question_count", 0) < runtime.context.config.max_questions:
+    if remaining and state.get("question_count", 0) < _max_questions(state, runtime.context.config):
         return {"next_action": "ask"}
     ack = state.get("ack") or ""
     if remaining:
@@ -270,7 +290,9 @@ def route_after_skip(state: AgentState) -> Literal["choose_next", "wait_user"]:
 
 def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     ctx = runtime.context
-    text = str((state.get("event") or {}).get("text", "")).strip()
+    raw_text = str((state.get("event") or {}).get("text", "")).strip()
+    # 비밀번호는 AI·지식베이스에 남기지 않는다(보안 서약). 값은 가리고, 출력본에 수기로 적도록 안내한다.
+    text, redacted = scrub_credentials(raw_text)
     user_turn = turn("user", "answer", text)
     gaps = copy.deepcopy(state.get("gaps") or [])
     slots = copy.deepcopy(state.get("slots") or {})
@@ -294,6 +316,10 @@ def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
 
     out: dict[str, Any] = {"last_intent": result.intent, "transcript": [user_turn]}
     intent = result.intent
+    if redacted:
+        out["transcript"].append(
+            _say("info", f"🔒 비밀번호는 보안상 기록하지 않았어요({CREDENTIAL_MASK}). 아이디·비밀번호는 완성된 인수인계서를 출력한 뒤 '시스템 접근 계정' 표에 직접 적어 주세요.")
+        )
 
     if intent == "finish":
         out["transcript"].append(_say("info", result.reply or "지금까지 정리한 내용으로 인수인계서를 작성할게요."))
@@ -407,7 +433,7 @@ def reanalyze(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
     _progress(f"새 자료 {len(names)}건을 분석에 반영하고 있어요.", status="running")
     slots = copy.deepcopy(state.get("slots") or {})
     gaps = copy.deepcopy(state.get("gaps") or [])
-    targets = list(SLOT_KEYS)  # 새 자료는 어느 장에든 정보를 더할 수 있으므로 전체를 다시 본다
+    targets = list(_keys(state.get("profile")))  # 새 자료는 어느 장에든 정보를 더할 수 있으므로 전체를 다시 본다
 
     with ThreadPoolExecutor(max_workers=max(1, ctx.config.max_concurrency)) as pool:
         results = dict(zip(targets, pool.map(lambda k: _analyze(ctx, k, state.get("profile", {})), targets)))

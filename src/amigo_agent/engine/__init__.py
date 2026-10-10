@@ -59,8 +59,8 @@ class Engine(Protocol):
 def retrieve_for_slot(spec: SlotSpec, profile: dict[str, Any], kb: KBAdapter, top_k: int = 6, limit: int = 12) -> list[Evidence]:
     """슬롯의 기본 검색어들로 근거를 모은다(중복 제거, 점수순)."""
     queries = list(spec.queries)
-    duties = str(profile.get("duties") or "").strip()
-    if duties and spec.key in ("duties", "projects"):
+    duties = str(profile.get("task_name") or profile.get("duties") or "").strip()
+    if duties and spec.key in ("duties", "recurring", "projects"):
         queries.insert(0, duties)
     seen: dict[str, Evidence] = {}
     for query in queries:

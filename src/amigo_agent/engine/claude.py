@@ -31,6 +31,7 @@ from ..prompts import (
 )
 from ..state import Gap, SlotState, combine_coverage, evaluate_coverage, new_id, upsert_item
 from ..template import ALL_FIELD_KEYS, SLOT_BY_KEY, SLOT_KEYS, SlotSpec
+from ..textkit import scrub_credentials
 from . import Interpretation, InterpretInput, SlotResult, retrieve_for_slot
 
 logger = logging.getLogger(__name__)
@@ -152,7 +153,7 @@ class ClaudeEngine:
         )
         slot: SlotState = {"key": spec.key, "items": [], "coverage": "missing", "summary": output.summary, "note": ""}
         for item in output.items:
-            fields = item.fields.model_dump()
+            fields = {k: scrub_credentials(str(v))[0] for k, v in item.fields.model_dump().items()}  # 자료에 비밀번호가 있어도 옮기지 않는다
             citations = registry.citations(item.evidence_ids, hint=item.title)
             if not citations:  # 근거 없는 항목은 기록하지 않는다(환각 방지)
                 logger.info("drop item without evidence: %s", item.title)
@@ -241,7 +242,7 @@ class ClaudeEngine:
         updates = []
         for up in output.updates:
             spec = SLOT_BY_KEY[up.slot]
-            fields = {fv.key: fv.value for fv in up.fields if spec.field(fv.key)}
+            fields = {fv.key: scrub_credentials(fv.value)[0] for fv in up.fields if spec.field(fv.key)}
             if not fields and not up.title:
                 continue
             updates.append(
