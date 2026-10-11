@@ -41,6 +41,7 @@ from .state import (
     upsert_item,
 )
 from .template import COVERAGE_LABELS, SLOT_BY_KEY, STAGE_LABEL, STAGE_NUMBER, slots_for
+from .textkit import CREDENTIAL_MASK, scrub_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -272,7 +273,9 @@ def route_after_skip(state: AgentState) -> Literal["choose_next", "wait_user"]:
 
 def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     ctx = runtime.context
-    text = str((state.get("event") or {}).get("text", "")).strip()
+    raw_text = str((state.get("event") or {}).get("text", "")).strip()
+    # 비밀번호는 AI·지식베이스에 남기지 않는다(보안 서약). 값은 가리고, 출력본에 수기로 적도록 안내한다.
+    text, redacted = scrub_credentials(raw_text)
     user_turn = turn("user", "answer", text)
     gaps = copy.deepcopy(state.get("gaps") or [])
     slots = copy.deepcopy(state.get("slots") or {})
@@ -296,6 +299,10 @@ def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
 
     out: dict[str, Any] = {"last_intent": result.intent, "transcript": [user_turn]}
     intent = result.intent
+    if redacted:
+        out["transcript"].append(
+            _say("info", f"🔒 비밀번호는 보안상 기록하지 않았어요({CREDENTIAL_MASK}). ID/PW 는 완성된 인수인계서를 출력한 뒤 시스템 접근 계정 표에 직접 적어 주세요.")
+        )
 
     if intent == "finish":
         out["transcript"].append(_say("info", result.reply or "지금까지 정리한 내용으로 인수인계서를 작성할게요."))

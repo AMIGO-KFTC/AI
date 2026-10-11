@@ -153,3 +153,22 @@ def test_mermaid_diagram_lists_stages():
     diagram = HandoverAgent().mermaid()
     for node in ("prepare", "analyze_slot", "summarize", "ask", "wait_user", "interpret", "compose"):
         assert node in diagram
+
+
+def test_passwords_are_never_stored(kb):
+    """보안 서약: 비밀번호 값은 대화·지식베이스·문서 어디에도 남기지 않고, 수기 작성을 안내한다."""
+    agent = HandoverAgent()
+    agent.start("pw", PROFILE, kb)
+    result = agent.send_message("pw", "재무팀 박지훈 차장 내선 2345, CMS 비밀번호는 Abcd1234! 입니다", kb)
+    assert any("직접 적어 주세요" in m["content"] for m in result.messages)
+    assert all("Abcd1234" not in m["content"] for m in result.messages)
+    assert kb.added and all("Abcd1234" not in t for t in kb.added)
+    assert "Abcd1234" not in str(result.snapshot)
+
+
+def test_scrub_credentials_keeps_descriptions():
+    from amigo_agent.textkit import scrub_credentials
+
+    assert scrub_credentials("GA 비밀번호는 보안USB에 보관")[1] is False
+    clean, found = scrub_credentials("ID는 admin, PW: p@ssw0rd 입니다")
+    assert found and "p@ssw0rd" not in clean

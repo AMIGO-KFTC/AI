@@ -73,6 +73,7 @@ COMPOSE_SYSTEM = """\
 
 def profile_block(profile: dict[str, Any]) -> str:
     rows = [
+        ("단위 업무명", profile.get("task_name")),
         ("성명/직책", " ".join(x for x in (profile.get("name"), profile.get("position")) if x)),
         ("소속", profile.get("organization")),
         ("인계 유형", MODE_LABELS[mode_of(profile)]),
