@@ -147,7 +147,7 @@ class OfflineEngine:
     def _add(self, slot: SlotState, title: str, fields: dict[str, str], ev: Evidence) -> None:
         if len(slot["items"]) >= 8 and not any(_norm(i.get("title", "")) == _norm(title) for i in slot["items"]):
             return
-        upsert_item(slot, item_id="", title=title, fields=fields, citations=[ev.to_citation(title)], origin="document")
+        upsert_item(slot, item_id="", title=title, fields=fields, citations=[ev.to_citation(title)], origin="document", defer=True)
 
     def _table_candidates(self, spec: SlotSpec, text: str):
         lines = text.split("\n")

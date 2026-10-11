@@ -15,6 +15,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from .precedence import RANK_LABELS, classify
 from .state import Citation
 
 
@@ -31,13 +32,23 @@ class Evidence:
     score: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def priority(self) -> dict[str, Any]:
+        """정보 충돌 우선순위 분류(순위·시각·유형). 메타데이터가 바뀌면 달라질 수 있어 매번 계산한다."""
+        return classify(self.metadata)
+
     def to_citation(self, hint: str = "") -> Citation:
-        return {
+        info = self.priority()
+        citation: Citation = {
             "source_id": self.source_id,
             "label": self.citation,
             "chunk_id": self.chunk_id,
             "quote": best_quote(self.text, hint),
+            "rank": info["rank"],
+            "doc_class": info["doc_class"],
         }
+        if info.get("ts"):
+            citation["ts"] = info["ts"]
+        return citation
 
 
 def _get(obj: Any, name: str, default: Any = None) -> Any:
@@ -142,7 +153,9 @@ class EvidenceRegistry:
         for ev in evidences:
             eid = self.register(ev)
             section = ev.metadata.get("section")
-            header = f"[{eid}] {ev.citation}" + (f" › {section}" if section else "")
+            info = ev.priority()
+            kind = RANK_LABELS[info["rank"]] + (f" · {info['ts'].replace('T', ' ')}" if info.get("ts") else "")
+            header = f"[{eid}] {ev.citation}" + (f" › {section}" if section else "") + f" ({kind})"
             body = ev.text if len(ev.text) <= max_chars else ev.text[:max_chars] + " …"
             lines.append(f"{header}\n{body}")
         return "\n\n".join(lines)
