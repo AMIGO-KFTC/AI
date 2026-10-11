@@ -85,3 +85,27 @@ def extract_parties(text: str) -> list[str]:
         if len(party) >= 2 and party not in parties and not party.endswith(("업무", "사업부")):
             parties.append(party)
     return parties
+
+
+# --------------------------------------------------------------------------- 계정 보안
+# 아이디·비밀번호는 AI(외부 서비스)에 입력하지 않는다는 보안 서약에 따라, 답변에서 비밀번호 값을 지우고 기록하지 않는다.
+_CREDENTIAL_RE = re.compile(
+    r"(?P<key>비밀\s*번호|패스워드|암호|password|passwd|pwd|\bpw\b)\s*(?:는|은|이|가|:|=|-)?\s*(?P<value>[^\s,;]{3,})",
+    re.I,
+)
+CREDENTIAL_MASK = "[비밀번호 기록 안 함]"
+
+
+def scrub_credentials(text: str) -> tuple[str, bool]:
+    """비밀번호로 보이는 값을 가린 문장과, 가린 적이 있는지를 돌려준다."""
+    found = False
+
+    def repl(match: re.Match) -> str:
+        nonlocal found
+        value = match.group("value")
+        if value in ("없음", "없어요", "없습니다") or value.startswith(("보안", "별도", "공용", "수기", "따로")):
+            return match.group(0)  # '비밀번호는 보안USB에 보관' 같은 설명은 값이 아니다
+        found = True
+        return f"{match.group('key')} {CREDENTIAL_MASK}"
+
+    return _CREDENTIAL_RE.sub(repl, text or ""), found

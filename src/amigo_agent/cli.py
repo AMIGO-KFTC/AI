@@ -40,6 +40,8 @@ def main(argv: list[str] | None = None) -> int:
     chat.add_argument("--position", default="과장")
     chat.add_argument("--duties", default="기관 홈페이지 운영 및 웹 접근성 관리")
     chat.add_argument("--successor", default="이서연 대리")
+    chat.add_argument("--task", default="", help="단위 업무명(예: CD공동망 운영)")
+    chat.add_argument("--mode", default="reassignment", choices=["reassignment", "leave"], help="reassignment=인사발령, leave=장기휴가(Light)")
     sub.add_parser("graph", help="상태 머신 Mermaid 다이어그램 출력")
     args = parser.parse_args(argv)
 
@@ -73,6 +75,8 @@ def main(argv: list[str] | None = None) -> int:
         "organization": args.org,
         "position": args.position,
         "duties": args.duties,
+        "task_name": args.task or args.duties,
+        "mode": args.mode,
         "successor": args.successor,
     }
     thread = kb.kb_id

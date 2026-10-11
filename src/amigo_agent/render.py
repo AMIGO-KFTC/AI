@@ -75,6 +75,36 @@ def _conflict_lines(active, slots: dict[str, SlotState]) -> list[str]:
     return lines
 
 
+# 관계 유형별 화살표 색. 요청·보고는 담당자에서 상대 방향, 협의는 양방향.
+RELATION_COLOR = {"요청": "#2563eb", "협의": "#16a34a", "보고": "#ea580c"}
+
+
+def _label(text: Any) -> str:
+    return str(text or "").replace('"', "'").replace("\n", " ").strip() or "-"
+
+
+def stakeholder_diagram(items: list[dict], *, owner: str, task: str) -> str:
+    """이해관계자 관계도(Mermaid). 관계 유형(요청·협의·보고)을 화살표 색으로 구분한다."""
+    lines = ["```mermaid", "flowchart LR", f'  ME(["{_label(owner)}<br/>{_label(task)}"])']
+    groups: dict[str, list[str]] = {"내부": [], "외부": []}
+    links: list[str] = []
+    for index, item in enumerate(items, start=1):
+        f = item.get("fields") or {}
+        relation = next((r for r in RELATION_COLOR if r in str(f.get("relation") or "")), "협의")
+        side = "내부" if "내부" in str(f.get("scope") or "") else "외부"
+        person = f"<br/>{_label(f.get('person'))}" if f.get("person") else ""
+        groups[side].append(f'    S{index}["{_label(f.get("party") or item.get("title"))}{person}"]')
+        links.append(relation)
+    for side, nodes in groups.items():
+        if nodes:
+            lines += [f'  subgraph {"IN" if side == "내부" else "OUT"}["{side}"]', *nodes, "  end"]
+    for index, relation in enumerate(links, start=1):
+        lines.append(f"  ME <-->|{relation}| S{index}" if relation == "협의" else f"  ME -->|{relation}| S{index}")
+    lines += [f"  linkStyle {i} stroke:{RELATION_COLOR[r]},stroke-width:2px" for i, r in enumerate(links)]
+    lines.append("```")
+    return "\n".join(lines)
+
+
 def render_document(
     *,
     profile: dict[str, Any],
@@ -97,6 +127,7 @@ def render_document(
         ("인수자", profile.get("successor")),
         ("인계 일자", profile.get("handover_date")),
         ("인계 유형", MODE_LABELS[mode_of(profile)]),
+        ("단위 업무명", profile.get("task_name")),
         ("담당 업무", profile.get("duties")),
         ("작성", f"{today.isoformat()} · AMIGO 자동 작성 초안 v{version}"),
     ]
@@ -118,6 +149,9 @@ def render_document(
         if not items:
             out += ["확인된 내용이 없습니다. (아래 '확인 필요 사항' 참고)", ""]
             continue
+        if spec.key == "stakeholders":
+            out += [stakeholder_diagram(items, owner=giver, task=str(profile.get("task_name") or "담당 업무")), ""]
+            out += ["화살표 색: 요청(파랑) · 협의(초록, 양방향) · 보고(주황)", ""]
         if spec.layout == "card":
             _render_cards(out, spec, items, cites)
         else:
