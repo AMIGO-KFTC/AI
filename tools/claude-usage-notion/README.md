@@ -32,7 +32,7 @@ GitHub Actions 등에서 돌릴 때는 키를 Secrets에 넣으세요.
 - Notion에서 Table 뷰 외에 Chart 뷰(일별 비용 합계)를 추가하면 대시보드처럼 쓸 수 있습니다.
 
 ## GitHub Actions로 자동 실행
-`.github/workflows/claude-usage-sync.yml` 이 10분마다(그리고 수동으로) 실행됩니다.
+`.github/workflows/claude-usage-sync.yml` 이 5분마다(그리고 수동으로) 실행됩니다.
 
 - Secrets: `ANTHROPIC_ADMIN_KEY`, `NOTION_TOKEN`
 - Variables: `NOTION_DATABASE_ID`, `NOTION_TOTAL_PAGE_ID`, `NOTION_BUDGET_USD`
