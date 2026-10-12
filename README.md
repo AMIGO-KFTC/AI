@@ -444,8 +444,8 @@ graph TD
 | STAGE 3 Q&A | `choose_next` → `ask` → `wait_user`(interrupt) → `interpret` → `resolve_answer` | 공백을 우선순위대로 **하나씩** 질문 → 답변 해석·항목 갱신 → 문서 값과 다르면 인계자 답변으로 확정(`resolve_answer`) → **교차 확인**("이렇게 정리했는데 맞나요?") → 다음 질문. 건너뛰기·되묻기·정정 처리, 대화 중 파일 추가 시 `reanalyze` → `resolve_reanalysis` 로 재분석·충돌 확정 |
 | STAGE 4 생성 | `compose` | 업무 개요·핵심 당부사항(LLM) + 표·근거 번호(코드)로 Markdown 인수인계서 작성. 이후 검토 의견을 받아 버전업 |
 
-`wait_user` 노드가 LangGraph `interrupt()` 로 사람 입력을 기다리고, 체크포인터(SQLite)에 상태가 저장되므로
-서버를 다시 시작해도 대화를 이어 갈 수 있습니다.
+`wait_user` 노드가 LangGraph `interrupt()` 로 사람 입력을 기다리고, 체크포인터에 상태가 저장되므로
+서버를 다시 시작해도 대화를 이어 갈 수 있습니다(단독 실행은 `with_sqlite` 의 SQLite 파일, BackEnd 는 서비스 DB 에 저장).
 
 ## 인수인계서 양식(슬롯)
 
@@ -462,7 +462,7 @@ graph TD
 
 양식은 2026-10-04 아이디어 구체화 회의 결정을 따릅니다. 업무 단위로 작성하며, 정기/비정기 업무에는 업무 히스토리(주요 결정·협의사항)와 후임자에게 바라는 점을 담습니다.
 
-**인계 유형**: 인계자 정보의 `mode` 로 고릅니다. `reassignment`(인사발령, 기본)은 6개 장 전체, `leave`(장기휴가, Light)는 이해관계자·정기 업무·비정기 업무·시스템 접근 계정 4개 장만 씁니다. (BackEnd/FrontEnd 입력 화면에서 `mode` 를 넘기는 부분은 아직 연결되어 있지 않습니다.)
+**인계 유형**: 인계자 정보의 `mode` 로 고릅니다. `reassignment`(인사발령, 기본)은 6개 장 전체, `leave`(장기휴가, Light)는 이해관계자·정기 업무·비정기 업무·시스템 접근 계정 4개 장만 씁니다. BackEnd 는 세션 생성(`POST /api/sessions`)과 단위업무(`POST /api/unit-tasks`) API 에서 `mode` 를 받아 넘기고, FrontEnd 시작 화면에서 유형을 고릅니다.
 
 ## 정보 충돌 우선순위
 
@@ -493,7 +493,7 @@ agent = HandoverAgent.with_sqlite("data/agent_checkpoints.sqlite")
 kb = KnowledgeBase(session_id)
 
 def on_event(event: dict):          # 진행 중 이벤트를 받아 DB 에 저장 → 프론트가 폴링
-    ...                             # stage / progress / slot / message / document
+    ...                             # stage / progress / slot / message / document / usage(Claude 호출마다)
 
 agent.start(session_id, profile, kb, on_event=on_event)         # STAGE 1 → 2 → 첫 질문
 agent.send_message(session_id, "업체 담당자는 …", kb, on_event)    # 답변 처리
@@ -503,6 +503,10 @@ agent.finish(session_id, kb, on_event)                           # 지금 문서
 agent.retry(session_id, kb, on_event)                            # 오류로 멈춘 실행 재시도
 agent.snapshot(session_id)  # {"stage","waiting","slots","gaps","pending","document","document_version",...}
 ```
+
+위 예시는 단독 실행용입니다. [BackEnd](https://github.com/AMIGO-KFTC/BackEnd) 는 `with_sqlite` 대신 서비스 DB 에 체크포인트를 저장하는
+체크포인터를 넘겨 씁니다: `HandoverAgent(checkpointer=DBCheckpointSaver(...))` (`app/services/checkpointer.py`, 저장 형식은 `SqliteSaver` 와 같음).
+그래서 SQLite·PostgreSQL 어느 쪽이든 대화 상태가 세션·메시지와 같은 DB 에 저장되고, 예전 `agent_checkpoints.sqlite` 파일은 시작할 때 한 번 옮겨집니다.
 
 `kb` 는 `search(query, top_k)` 만 있으면 되는 덕 타이핑 인터페이스입니다(`add_text`, `list_sources` 는 선택).
 그래서 RAG 없이 가짜 지식베이스로도 개발·테스트할 수 있습니다(`tests/conftest.py::FakeKB`).
