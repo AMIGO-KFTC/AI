@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Annotated, Any, TypedDict
 
+from .precedence import RANK_REFERENCE, RANK_USER, beats, classify, now_ts, reason, user_meta
 from .template import SLOT_BY_KEY, SLOT_KEYS, SlotSpec
 
 
@@ -19,6 +20,9 @@ class Citation(TypedDict, total=False):
     label: str  # 사람이 읽는 출처 표기 (예: "업무정의서.pdf p.3")
     chunk_id: str
     quote: str  # 근거 문장 일부
+    rank: int  # 정보 충돌 우선순위(1 인계자 답변 · 2 공식 문서 · 3 회의록·메일 · 4 날짜 없는 자료)
+    ts: str  # 자료 작성(발신) 시각, 분 단위 ISO. 날짜가 없으면 생략
+    doc_class: str  # user | official | minutes | mail | reference
 
 
 class SlotItem(TypedDict, total=False):
@@ -28,6 +32,9 @@ class SlotItem(TypedDict, total=False):
     citations: list[Citation]
     origin: str  # "document" | "user"
     confirmed: bool
+    field_meta: dict[str, dict[str, Any]]  # 필드별로 현재 값의 출처 순위·시각·출처 표기
+    conflicts: list[dict[str, Any]]  # 자동으로 처리한 정보 충돌 내역(최종 검토용)
+    candidates: dict[str, list[dict[str, Any]]]  # 아직 확정하지 않은 필드별 후보 값(resolve_conflicts 노드가 확정하고 지움)
 
 
 class SlotState(TypedDict, total=False):
@@ -143,6 +150,85 @@ def find_item(items: list[SlotItem], *, item_id: str = "", title: str = "") -> S
     return None
 
 
+def citation_meta(citations: list[Citation], origin: str) -> dict[str, Any]:
+    """이번에 들어온 값의 출처 순위. 근거 중 가장 강한 것(순위, 같으면 최신)을 쓴다."""
+    best: dict[str, Any] | None = None
+    for c in citations:
+        if c.get("rank") is None:
+            continue
+        meta = {"rank": int(c["rank"]), "ts": c.get("ts"), "doc_class": c.get("doc_class", ""), "label": c.get("label", "")}
+        if best is None or beats(meta, best):
+            best = meta
+    if best is not None:
+        return best
+    label = citations[0].get("label", "") if citations else ""
+    if origin == "user":
+        return user_meta(label)
+    return {"rank": RANK_REFERENCE, "ts": None, "doc_class": "reference", "label": label}
+
+
+def _field_default_meta(item: SlotItem) -> dict[str, Any]:
+    """출처 정보가 없는 값(이전 버전 상태 등)은 항목의 출처로 순위를 추정한다."""
+    if item.get("origin") == "user":
+        return {"rank": RANK_USER, "ts": None, "doc_class": "user", "label": "인계자 답변"}
+    return {"rank": RANK_REFERENCE, "ts": None, "doc_class": "reference", "label": ""}
+
+
+def apply_field(item: SlotItem, key: str, value: str, meta: dict[str, Any], *, defer: bool = False) -> None:
+    """필드 값을 넣는다. 기존 값과 다르면 우선순위로 이기는 쪽을 쓰고, 충돌 내역을 항목에 남긴다.
+
+    defer=True 이면 판정하지 않고 후보로만 모아 둔다. 그래프의 resolve_conflicts 노드가 `resolve_slots` 로 확정한다.
+    """
+    fields = item.setdefault("fields", {})
+    metas = item.setdefault("field_meta", {})
+    old = str(fields.get(key, "")).strip()
+    old_meta = metas.get(key) or _field_default_meta(item)
+    if defer:
+        candidates = item.setdefault("candidates", {}).setdefault(key, [])
+        if old and not candidates:  # 이미 확정된 값도 후보로 함께 겨룬다
+            candidates.append({"value": old, **old_meta})
+        candidates.append({"value": value, **meta})
+        if not old:
+            fields[key], metas[key] = value, meta  # 확정 전까지 임시로 첫 값을 보여 준다
+        return
+    if not old:
+        fields[key], metas[key] = value, meta
+        return
+    if old == value:
+        if beats(meta, old_meta):
+            metas[key] = meta
+        return
+    if beats(meta, old_meta):
+        winner, loser, applied, dropped = meta, old_meta, value, old
+        fields[key], metas[key] = value, meta
+    else:
+        winner, loser, applied, dropped = old_meta, meta, old, value
+    record = {
+        "field": key,
+        "applied": applied,
+        "applied_label": winner.get("label", ""),
+        "dropped": dropped,
+        "dropped_label": loser.get("label", ""),
+        "reason": reason(winner, loser),
+    }
+    conflicts = item.setdefault("conflicts", [])
+    sig = (record["field"], record["applied"], record["dropped"])
+    if not any((c["field"], c["applied"], c["dropped"]) == sig for c in conflicts):
+        conflicts.append(record)
+
+
+def merge_item_fields(target: SlotItem, source: SlotItem, *, defer: bool = False) -> None:
+    """source 항목의 값을 target 에 합친다(재분석 때 기존 항목을 새 분석 결과에 합칠 때). 필드별 우선순위를 따른다."""
+    metas = source.get("field_meta") or {}
+    for key, value in (source.get("fields") or {}).items():
+        if str(value).strip():
+            apply_field(target, key, str(value).strip(), metas.get(key) or _field_default_meta(source), defer=defer)
+    known = {(c["field"], c["applied"], c["dropped"]) for c in target.get("conflicts", [])}
+    for c in source.get("conflicts", []):
+        if (c["field"], c["applied"], c["dropped"]) not in known:
+            target.setdefault("conflicts", []).append(c)
+
+
 def upsert_item(
     slot_state: SlotState,
     *,
@@ -152,8 +238,13 @@ def upsert_item(
     citations: list[Citation],
     origin: str,
     confirmed: bool = False,
+    defer: bool = False,
 ) -> SlotItem:
-    """항목을 추가하거나(새 항목) 기존 항목의 빈/변경 필드를 갱신한다. 갱신된 항목을 반환."""
+    """항목을 추가하거나(새 항목) 기존 항목의 빈/변경 필드를 갱신한다. 갱신된 항목을 반환.
+
+    기존 값과 다른 값이 들어오면 정보 충돌 우선순위(precedence.py)에 따라 이기는 값을 쓴다.
+    defer=True 이면 충돌을 바로 판정하지 않고 후보로 모아 두며, 그래프의 resolve_conflicts 노드가 확정한다.
+    """
     spec = SLOT_BY_KEY[slot_state["key"]]
     items = slot_state.setdefault("items", [])
     clean = {k: str(v).strip() for k, v in fields.items() if spec.field(k) and str(v).strip()}
@@ -165,6 +256,7 @@ def upsert_item(
             "id": new_id(spec.key),
             "title": title.strip() or clean.get(spec.title_field, "항목"),
             "fields": {},
+            "field_meta": {},
             "citations": [],
             "origin": origin,
             "confirmed": confirmed,
@@ -174,7 +266,9 @@ def upsert_item(
         existing["title"] = title.strip()
     elif title.strip() and len(existing.get("title", "")) > 25 and len(title.strip()) < len(existing["title"]):
         existing["title"] = title.strip()  # 문장형 제목보다 짧은 항목명을 우선한다
-    existing.setdefault("fields", {}).update(clean)
+    meta = citation_meta(citations, origin)
+    for key, value in clean.items():
+        apply_field(existing, key, value, meta, defer=defer)
     known = {(c.get("source_id"), c.get("chunk_id"), c.get("label")) for c in existing.get("citations", [])}
     for citation in citations:
         sig = (citation.get("source_id"), citation.get("chunk_id"), citation.get("label"))
@@ -186,6 +280,32 @@ def upsert_item(
         existing["confirmed"] = confirmed
     slot_state["coverage"] = evaluate_coverage(spec, items)
     return existing
+
+
+def resolve_item(item: SlotItem) -> bool:
+    """항목에 모인 후보 값을 우선순위로 확정하고 후보를 지운다. 확정할 후보가 있었으면 True."""
+    candidates = item.pop("candidates", None)
+    if not candidates:
+        return False
+    fields = item.setdefault("fields", {})
+    metas = item.setdefault("field_meta", {})
+    for key, entries in candidates.items():
+        fields.pop(key, None)  # 임시 값을 지우고 후보를 들어온 순서대로 다시 겨룬다
+        metas.pop(key, None)
+        for entry in entries:
+            meta = {k: v for k, v in entry.items() if k != "value"}
+            apply_field(item, key, str(entry["value"]), meta)
+    return True
+
+
+def resolve_slots(slots: dict[str, SlotState]) -> list[str]:
+    """모든 슬롯의 후보 값을 확정한다. 확정이 일어난 슬롯 키를 반환."""
+    changed: list[str] = []
+    for key, slot in slots.items():
+        touched = [resolve_item(item) for item in slot.get("items", [])]
+        if any(touched):
+            changed.append(key)
+    return changed
 
 
 def empty_slots(keys: tuple[str, ...] | list[str] | None = None) -> dict[str, SlotState]:

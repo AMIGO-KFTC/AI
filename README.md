@@ -371,6 +371,7 @@ python -m amigo_agent chat --files ../RAG/samples/*.pdf ../RAG/samples/*.docx ..
 | 하고 싶은 것 | 파일 |
 |---|---|
 | 인수인계서 양식(장·필드·필수 항목) 바꾸기 | `template.py` |
+| 정보 충돌 우선순위 바꾸기 | `precedence.py` |
 | 질문 말투·분석 지침 같은 프롬프트 다듬기 | `prompts.py` |
 | 단계 흐름(노드·분기) 바꾸기 | `graph.py`(연결), `nodes.py`(노드 동작) |
 | 최종 문서 모양(표·근거 번호·순서) 바꾸기 | `render.py` |
@@ -403,6 +404,7 @@ src/amigo_agent/
   nodes.py        노드 함수(prepare, analyze_slot, summarize, ask, wait_user, interpret, compose …)
   state.py        그래프 상태와 슬롯·공백 조작 도우미
   template.py     인수인계서 양식(슬롯) 정의
+  precedence.py   정보 충돌 우선순위(출처 순위·시각 판정)
   prompts.py      한국어 프롬프트
   engine/         claude.py(Agentic RAG + 구조화 출력) · offline.py(규칙 기반)
   llm.py          Claude 호출 래퍼(공식 Anthropic SDK)
@@ -421,25 +423,25 @@ evals/            실제 Claude 품질 평가(정답 사실, 모의 인계자, �
 graph TD
   START((시작)) --> prepare
   prepare -- "Send ×6 (슬롯별 병렬, 장기휴가는 ×4)" --> analyze_slot
-  analyze_slot --> collect_gaps --> summarize --> choose_next
+  analyze_slot --> resolve_conflicts --> collect_gaps --> summarize --> choose_next
   choose_next -- 남은 공백 있음 --> ask --> wait_user
   choose_next -- 공백 없음/질문 한도 --> compose
-  wait_user -- 메시지 --> interpret
+  wait_user -- 메시지 --> interpret --> resolve_answer
   wait_user -- 건너뛰기 --> skip_gap --> choose_next
-  wait_user -- 파일 추가 --> reanalyze
+  wait_user -- 파일 추가 --> reanalyze --> resolve_reanalysis
   wait_user -- 문서 생성 --> request_finish --> compose
-  interpret -- 확인·건너뜀 --> choose_next
-  interpret -- 교차 확인 대기·되묻기 --> wait_user
-  interpret -- 검토 의견 반영 --> compose
-  reanalyze --> choose_next
+  resolve_answer -- 확인·건너뜀 --> choose_next
+  resolve_answer -- 교차 확인 대기·되묻기 --> wait_user
+  resolve_answer -- 검토 의견 반영 --> compose
+  resolve_reanalysis --> choose_next
   compose --> wait_user
 ```
 
 | 단계 | 노드 | 하는 일 |
 |---|---|---|
-| STAGE 1 분석 | `prepare` → `analyze_slot` ×6 → `collect_gaps` | 슬롯(장)별로 근거를 검색하고, 모자라면 모델이 `search_documents` 를 스스로 호출해 연결 정보를 추가 탐색(Agentic RAG). 항목·충족 수준·공백(gap) 도출 |
+| STAGE 1 분석 | `prepare` → `analyze_slot` ×6 → `resolve_conflicts` → `collect_gaps` | 슬롯(장)별로 근거를 검색하고, 모자라면 모델이 `search_documents` 를 스스로 호출해 연결 정보를 추가 탐색(Agentic RAG). 항목·충족 수준·공백(gap) 도출. 같은 필드에 다른 값이 모이면 `resolve_conflicts` 가 우선순위로 확정 |
 | STAGE 2 요약 | `summarize` | 장별 충족 현황(🟢충분/🟡부분/🔴부족)과 안내문 |
-| STAGE 3 Q&A | `choose_next` → `ask` → `wait_user`(interrupt) → `interpret` | 공백을 우선순위대로 **하나씩** 질문 → 답변 해석·항목 갱신 → **교차 확인**("이렇게 정리했는데 맞나요?") → 다음 질문. 건너뛰기·되묻기·정정 처리, 대화 중 파일 추가 시 재분석 |
+| STAGE 3 Q&A | `choose_next` → `ask` → `wait_user`(interrupt) → `interpret` → `resolve_answer` | 공백을 우선순위대로 **하나씩** 질문 → 답변 해석·항목 갱신 → 문서 값과 다르면 인계자 답변으로 확정(`resolve_answer`) → **교차 확인**("이렇게 정리했는데 맞나요?") → 다음 질문. 건너뛰기·되묻기·정정 처리, 대화 중 파일 추가 시 `reanalyze` → `resolve_reanalysis` 로 재분석·충돌 확정 |
 | STAGE 4 생성 | `compose` | 업무 개요·핵심 당부사항(LLM) + 표·근거 번호(코드)로 Markdown 인수인계서 작성. 이후 검토 의견을 받아 버전업 |
 
 `wait_user` 노드가 LangGraph `interrupt()` 로 사람 입력을 기다리고, 체크포인터에 상태가 저장되므로
@@ -461,6 +463,23 @@ graph TD
 양식은 2026-10-04 아이디어 구체화 회의 결정을 따릅니다. 업무 단위로 작성하며, 정기/비정기 업무에는 업무 히스토리(주요 결정·협의사항)와 후임자에게 바라는 점을 담습니다.
 
 **인계 유형**: 인계자 정보의 `mode` 로 고릅니다. `reassignment`(인사발령, 기본)은 6개 장 전체, `leave`(장기휴가, Light)는 이해관계자·정기 업무·비정기 업무·시스템 접근 계정 4개 장만 씁니다. BackEnd 는 세션 생성(`POST /api/sessions`)과 단위업무(`POST /api/unit-tasks`) API 에서 `mode` 를 받아 넘기고, FrontEnd 시작 화면에서 유형을 고릅니다.
+
+## 정보 충돌 우선순위
+
+같은 항목의 같은 필드에 서로 다른 값이 들어오면(문서끼리, 문서와 인계자 답변, 인계자의 번복) `precedence.py` 의 규칙으로 이기는 값을 자동으로 정합니다.
+
+| 순위 | 출처 |
+|---|---|
+| 1 | 인계자가 확인한 최신 답변 (번복·문서와의 충돌 모두에 적용) |
+| 2 | 작성일이 더 최근인 공식 문서 |
+| 3 | 회의록·메일 |
+| 4 | 날짜가 없는 참고자료 |
+
+- 같은 순위끼리는 **시각(분 단위)이 더 최근인 자료**를 씁니다. 날짜가 있는 쪽이 없는 쪽보다 강합니다. 인계자 답변끼리는 초 단위로 비교하고 같은 시각이면 나중 답변을 씁니다. 같은 순위·같은 시각(또는 둘 다 날짜 없음)이면 먼저 확인된 값을 유지합니다.
+- '공식 문서'는 회의록·메일이 아니면서 작성일(`created_at`, 없으면 `modified_at`)이 있는 파일입니다. 메일은 `sent_at` 을 씁니다. 자료 메타데이터에 `doc_class`(`official`/`minutes`/`mail`/`reference`)가 있으면 그 값을 우선합니다.
+- 그래프에서는 `resolve_conflicts` 노드가 맡습니다. 분석(`analyze_slot`)·답변 해석(`interpret`)·재분석(`reanalyze`)은 값을 **후보**로만 모아 두고(`upsert_item(..., defer=True)`), 이 노드가 우선순위로 하나를 확정합니다. 같은 노드를 세 지점(`resolve_conflicts`, `resolve_answer`, `resolve_reanalysis`)에 두었고, 확정한 슬롯은 화면 이벤트로 다시 내보냅니다.
+- 필드 단위로 적용하며, 처리한 충돌은 항목의 `conflicts` 에 남고 최종 문서의 **확인 필요 사항**에 "적용한 값 / 제외한 값 / 사유"로 표시됩니다. 인계자는 최종 검토 때 이를 확인합니다.
+- Claude 분석에서는 근거 머리글에 유형·작성일이 붙고, 프롬프트에 같은 우선순위가 들어 있어 모델이 하나를 고릅니다. 항목은 인용한 근거 중 가장 강한 순위로 기록됩니다.
 
 충족 수준은 "규칙(필수 필드·최소 항목 수)"과 "LLM 판정" 중 **더 보수적인 쪽**을 택해, 근거 없이 '충분'으로 넘어가지 않게 했습니다.
 

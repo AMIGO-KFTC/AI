@@ -158,7 +158,7 @@ class ClaudeEngine:
             if not citations:  # 근거 없는 항목은 기록하지 않는다(환각 방지)
                 logger.info("drop item without evidence: %s", item.title)
                 continue
-            upsert_item(slot, item_id="", title=item.title, fields=fields, citations=citations, origin="document")
+            upsert_item(slot, item_id="", title=item.title, fields=fields, citations=citations, origin="document", defer=True)
         slot["coverage"] = combine_coverage(evaluate_coverage(spec, slot["items"]), output.coverage)
         gaps: list[Gap] = []
         for proposal in output.gaps[: self.config.max_gaps_per_slot]:

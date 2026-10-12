@@ -1,8 +1,8 @@
 """LangGraph 노드 함수.
 
-    STAGE 1 분석   prepare → analyze_slot(슬롯별 병렬, Send) → collect_gaps
+    STAGE 1 분석   prepare → analyze_slot(슬롯별 병렬, Send) → resolve_conflicts → collect_gaps
     STAGE 2 요약   summarize
-    STAGE 3 Q&A    choose_next → ask → wait_user(interrupt) → interpret / skip_gap / reanalyze → …
+    STAGE 3 Q&A    choose_next → ask → wait_user(interrupt) → interpret / skip_gap / reanalyze → (resolve_conflicts) → …
     STAGE 4 생성   compose → wait_user(검토 의견 대기) → interpret → compose …
 
 노드는 상태를 직접 고치지 않고 바뀐 부분만 dict 로 돌려준다. 화면에 보여줄 메시지·진행률은
@@ -27,6 +27,7 @@ from .engine import Engine, Interpretation, InterpretInput, SlotResult
 from .engine.offline import OfflineEngine
 from .kb import KBAdapter
 from .llm import LLMError, LLMOutputError
+from .precedence import RANK_USER, now_ts
 from .render import render_document
 from .state import (
     AgentState,
@@ -36,7 +37,9 @@ from .state import (
     empty_slots,
     evaluate_coverage,
     find_item,
+    merge_item_fields,
     open_gaps,
+    resolve_slots,
     turn,
     upsert_item,
 )
@@ -152,6 +155,22 @@ def collect_gaps(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str,
             g["rank"] = ranks[g["id"]]
     _progress("자료 분석을 마쳤어요.", current=len(active), total=len(active))
     return {"gaps": open_gaps(planned)}
+
+
+def resolve_conflicts(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
+    """같은 필드에 모인 후보 값의 충돌을 우선순위(precedence.py)로 확정한다.
+
+    분석(analyze_slot)·답변 해석(interpret)·재분석(reanalyze)은 값을 '후보'로만 모으고, 이 노드가
+    인계자 최신 답변 > 공식 문서 > 회의록·메일 > 날짜 없는 자료 순으로 하나를 고른다. 처리 내역은 항목의
+    `conflicts` 에 남고 최종 문서의 '확인 필요 사항'에 표시된다. 같은 함수를 세 지점에 노드로 등록해 쓴다.
+    """
+    slots = copy.deepcopy(state.get("slots") or {})
+    changed = resolve_slots(slots)
+    if not changed:
+        return {}
+    for key in changed:
+        _emit({"type": "slot", "key": key, "slot": {k: v for k, v in slots[key].items() if k != "proposed_gaps"}})
+    return {"slots": {key: slots[key] for key in changed}}
 
 
 # =========================================================================== STAGE 2
@@ -377,6 +396,9 @@ def _apply_updates(ctx: AgentContext, state: AgentState, slots: dict, result: In
         "label": f"인계자 답변 ({date.today().isoformat()} 대화)",
         "chunk_id": "",
         "quote": text if len(text) <= 120 else text[:119] + "…",
+        "rank": RANK_USER,
+        "ts": now_ts(),
+        "doc_class": "user",
     }
     refs: list[list[str]] = []
     for update in result.updates:
@@ -390,6 +412,7 @@ def _apply_updates(ctx: AgentContext, state: AgentState, slots: dict, result: In
             citations=list(update.get("citations") or []) + [user_citation],
             origin="user",
             confirmed=False,
+            defer=True,  # 문서 값과의 충돌은 resolve_conflicts 노드가 우선순위로 확정한다
         )
         slot["coverage"] = evaluate_coverage(SLOT_BY_KEY[slot_key], slot["items"])
         refs.append([slot_key, item["id"]])
@@ -435,8 +458,7 @@ def reanalyze(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
             if match is None:
                 new.setdefault("items", []).append(item)
                 continue
-            user_fields = {k: v for k, v in (item.get("fields") or {}).items() if str(v).strip()}
-            match.setdefault("fields", {}).update(user_fields)
+            merge_item_fields(match, item, defer=True)  # 값이 다르면 우선순위(인계자 답변 > 공식 문서 > 회의록·메일 > 날짜 없는 자료)로 정한다
             known = {(c.get("label"), c.get("quote")) for c in match.get("citations", [])}
             match.setdefault("citations", []).extend(c for c in item.get("citations", []) if (c.get("label"), c.get("quote")) not in known)
             match["origin"] = "mixed"
