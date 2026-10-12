@@ -1,0 +1,35 @@
+name: claude-usage-sync
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+# Never run two syncs at once (they write the same Notion rows).
+concurrency:
+  group: claude-usage-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: tools/claude-usage-notion
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Sync Claude API usage to Notion
+        env:
+          ANTHROPIC_ADMIN_KEY: ${{ secrets.ANTHROPIC_ADMIN_KEY }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ vars.NOTION_DATABASE_ID }}
+          NOTION_TOTAL_PAGE_ID: ${{ vars.NOTION_TOTAL_PAGE_ID }}
+          NOTION_BUDGET_USD: ${{ vars.NOTION_BUDGET_USD }}
+        run: python sync_usage.py --hours 48 --cost-days 7
