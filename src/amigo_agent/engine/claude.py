@@ -15,7 +15,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from ..config import AgentConfig
-from ..kb import EvidenceRegistry, KBAdapter
+from ..kb import Evidence, EvidenceRegistry, KBAdapter
 from ..llm import SEARCH_TOOL, ClaudeLLM, LLMOutputError
 from ..prompts import (
     ANALYSIS_SYSTEM,
@@ -118,6 +118,21 @@ class ComposeOutput(BaseModel):
     key_points: list[str]
 
 
+def _no_relevant_message(query: str, results: list[Evidence]) -> str:
+    """검색은 됐지만 질문과 관련 있어 보이는 조각이 없을 때 모델에게 알리는 도구 결과.
+
+    조각 본문은 싣지 않고(근거로 잘못 쓰지 않도록) 가장 가까운 자료 이름만 알려 준다.
+    표현이 달라 놓쳤을 수 있으니 다른 표현으로 한 번 더 찾아보게 안내한다.
+    """
+    nearest = ", ".join(dict.fromkeys(r.citation for r in results[:3]))
+    return (
+        f"'{query}' 와 관련 있다고 판단되는 검색 결과가 없습니다. 자료에 없는 내용일 가능성이 큽니다.\n"
+        f"(가장 가까운 자료: {nearest} — 질문과 직접 관련이 낮아 근거로 쓸 수 없습니다.)\n"
+        "다른 표현(동의어·약어·구체적인 이름)으로 한 번 더 찾아보고도 없으면, 자료에 없는 것으로 보고 "
+        "빈 값으로 두거나 인계자에게 물어볼 질문(gaps)에 넣으세요."
+    )
+
+
 class ClaudeEngine:
     name = "claude"
 
@@ -134,6 +149,12 @@ class ClaudeEngine:
             results = kb.search(query, top_k=self.config.search_top_k)
             if not results:
                 return f"'{query}' 에 대한 검색 결과가 없습니다."
+            if self.config.hide_irrelevant:
+                # relevant 가 None 이면 지식베이스가 판정하지 못한 것이므로 그대로 보여 준다.
+                relevant = [r for r in results if r.relevant is not False]
+                if not relevant:
+                    return _no_relevant_message(query, results)
+                results = relevant
             return registry.format(results, max_chars=900)
 
         return handler

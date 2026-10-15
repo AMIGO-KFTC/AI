@@ -31,6 +31,9 @@ class Evidence:
     source_id: str
     score: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
+    # 질문의 핵심 단어가 이 조각에 얼마나 들어 있는지(RAG 의 relevance/relevant). None 이면 지식베이스가 판정하지 않은 것.
+    relevance: float | None = None
+    relevant: bool | None = None
 
     def priority(self) -> dict[str, Any]:
         """정보 충돌 우선순위 분류(순위·시각·유형). 메타데이터가 바뀌면 달라질 수 있어 매번 계산한다."""
@@ -55,6 +58,14 @@ def _get(obj: Any, name: str, default: Any = None) -> Any:
     if isinstance(obj, dict):
         return obj.get(name, default)
     return getattr(obj, name, default)
+
+
+def _optional_float(value: Any) -> float | None:
+    return None if value is None else float(value)
+
+
+def _optional_bool(value: Any) -> bool | None:
+    return None if value is None else bool(value)
 
 
 def _label_from_meta(meta: dict[str, Any]) -> str:
@@ -90,6 +101,8 @@ class KBAdapter:
                     source_id=str(meta.get("source_id", "")),
                     score=float(_get(r, "score", 0.0) or 0.0),
                     metadata=meta,
+                    relevance=_optional_float(_get(r, "relevance")),
+                    relevant=_optional_bool(_get(r, "relevant")),
                 )
             )
         return results
