@@ -9,8 +9,10 @@
 - hidden_recall  : 자료에 없고 인계자만 아는 사실(gold.HIDDEN_FACTS)을 질의응답으로 받아 문서에 넣은 비율
 - unsupported    : 심사(Claude)가 찾은 '자료·답변에 근거 없는 주장' 수(환각)
 - question_*     : 질문 품질(인계자가 기억으로 답할 수 있는가 / 자료에 이미 답이 있는가 / 한 가지 주제인가)
+- tool_searches  : 모델이 search_documents 도구로 직접 한 검색 수와, 그중 '관련 있는 결과가 없다'는 응답을 받은 수(--hide-irrelevant on|off 로 A/B)
 - usage          : 에이전트의 API 호출 수·토큰·추정 비용(모의 인계자·심사 비용은 따로 표시)
 
+심사는 AMIGO_EVAL_JUDGE_MODEL(기본 claude-sonnet-5-5), 모의 인계자는 claude-opus-5-5 를 쓴다.
 모의 인계자는 gold.PERSONA 의 기억만으로 답하는 Claude 이다. 실제 API 를 쓰므로 실행할 때마다 비용이 든다.
 """
 
@@ -18,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -31,12 +34,14 @@ from pydantic import BaseModel, ConfigDict
 from amigo_agent import HandoverAgent
 from amigo_agent.config import AgentConfig
 from amigo_agent.llm import UsageMeter
+from amigo_agent.template import SLOTS
 from amigo_rag import KnowledgeBase, RAGSettings
 
 sys.path.insert(0, str(Path(__file__).parent))
 from gold import DOC_FACTS, HIDDEN_FACTS, PERSONA  # noqa: E402
 
-MODEL = "claude-opus-5-5"
+MODEL = "claude-opus-5-5"  # 모의 인계자
+JUDGE_MODEL = os.getenv("AMIGO_EVAL_JUDGE_MODEL", "claude-sonnet-5-5")  # 심사
 SAMPLES = Path(__file__).resolve().parents[2] / "RAG" / "samples"
 PROFILE = {
     "name": "김민수",
@@ -97,7 +102,7 @@ def judge(client: Any, meter: UsageMeter, *, sources: str, answers: str, documen
         f"## AI 가 한 질문\n" + "\n".join(f"- {q}" for q in questions) + f"\n\n## 심사할 인수인계서\n{document}"
     )
     response = client.messages.create(
-        model=MODEL,
+        model=JUDGE_MODEL,
         max_tokens=16000,
         system=JUDGE_SYSTEM,
         messages=[{"role": "user", "content": user}],
@@ -122,6 +127,42 @@ def simulated_reply(client: Any, meter: UsageMeter, transcript: list[tuple[str, 
     return "".join(b.text for b in response.content if b.type == "text").strip()
 
 
+# --------------------------------------------------------------------------- 검색 기록
+class LoggingKB:
+    """에이전트가 부르는 search 를 기록한다(질문·결과 수·관련 있음 판정 수). 나머지 메서드는 그대로 위임한다."""
+
+    def __init__(self, kb: Any) -> None:
+        self._kb = kb
+        self.log: list[dict[str, Any]] = []
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._kb, name)
+
+    def search(self, query: str, top_k: int = 5, **kwargs: Any) -> list[Any]:
+        results = self._kb.search(query, top_k=top_k, **kwargs)
+        self.log.append(
+            {
+                "query": query,
+                "results": len(results),
+                "relevant": sum(getattr(r, "relevant", None) is True for r in results),
+                "irrelevant": sum(getattr(r, "relevant", None) is False for r in results),
+            }
+        )
+        return results
+
+
+def search_summary(log: list[dict[str, Any]], default_queries: set[str]) -> dict[str, Any]:
+    """장별 기본 검색어가 아닌 검색 = 모델이 search_documents 도구로 직접 한 검색."""
+    tool = [e for e in log if e["query"] not in default_queries]
+    return {
+        "searches_total": len(log),
+        "tool_searches": len(tool),
+        "tool_searches_without_relevant": sum(1 for e in tool if e["results"] and not e["relevant"]),
+        "tool_searches_empty": sum(1 for e in tool if not e["results"]),
+        "tool_search_log": tool,
+    }
+
+
 # --------------------------------------------------------------------------- 실행
 def build_kb() -> tuple[KnowledgeBase, str]:
     kb = KnowledgeBase(f"eval-{uuid.uuid4().hex[:8]}", settings=RAGSettings.in_memory())
@@ -137,11 +178,12 @@ def build_kb() -> tuple[KnowledgeBase, str]:
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
     client = anthropic.Anthropic(max_retries=3)
-    side_meter = UsageMeter()
-    config = AgentConfig(llm_mode=args.mode, max_questions=args.questions)
+    persona_meter, judge_meter = UsageMeter(), UsageMeter()
+    config = AgentConfig(llm_mode=args.mode, max_questions=args.questions, hide_irrelevant=args.hide_irrelevant == "on")
     agent = HandoverAgent(config)
-    kb, sources = build_kb()
-    thread = kb.kb_id
+    raw_kb, sources = build_kb()
+    kb = LoggingKB(raw_kb)
+    thread = raw_kb.kb_id
 
     transcript: list[tuple[str, str]] = []
     questions: list[str] = []
@@ -160,7 +202,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         snap = agent.snapshot(thread)
         if snap["document"] or not snap["waiting"]:
             break
-        reply = simulated_reply(client, side_meter, transcript)
+        reply = simulated_reply(client, persona_meter, transcript)
         transcript.append(("인계자", reply))
         answers.append(reply)
         record(agent.send_message(thread, reply, kb))
@@ -181,9 +223,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "doc_facts": doc_hits,
         "hidden_facts": hidden_hits,
         "agent_usage": agent.usage(),
+        "hide_irrelevant": config.hide_irrelevant,
+        "judge_model": None if args.no_judge else JUDGE_MODEL,
     }
+    default_queries = {q for spec in SLOTS for q in spec.queries} | {PROFILE["duties"]}
+    result.update(search_summary(kb.log, default_queries))
     if not args.no_judge:
-        verdict = judge(client, side_meter, sources=sources, answers="\n".join(f"- {a}" for a in answers), document=document, questions=questions)
+        verdict = judge(client, judge_meter, sources=sources, answers="\n".join(f"- {a}" for a in answers), document=document, questions=questions)
         rated = verdict.questions or []
         result.update(
             unsupported=len(verdict.unsupported_claims),
@@ -193,7 +239,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             question_single_topic=round(sum(q.single_topic for q in rated) / max(len(rated), 1), 3),
             question_ratings=[q.model_dump() for q in rated],
         )
-    result["side_usage"] = side_meter.summary(MODEL)
+    result["persona_usage"] = persona_meter.summary(MODEL)
+    if not args.no_judge:
+        result["judge_usage"] = judge_meter.summary(JUDGE_MODEL)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -208,14 +256,16 @@ def main() -> int:
     parser.add_argument("--mode", choices=["claude", "offline"], default="claude")
     parser.add_argument("--questions", type=int, default=8, help="최대 질문 수(AMIGO_MAX_QUESTIONS)")
     parser.add_argument("--out", default="evals/runs/latest")
+    parser.add_argument("--hide-irrelevant", choices=["on", "off"], default="on", help="search_documents 의 '관련 없음' 숨김(AMIGO_HIDE_IRRELEVANT)")
     parser.add_argument("--no-judge", action="store_true", help="Claude 심사 생략(환각·질문 품질 점수 없음)")
     r = run(parser.parse_args())
-    keys = ["engine", "elapsed_sec", "questions_asked", "doc_recall", "hidden_recall", "unsupported",
-            "question_from_memory", "question_redundant", "question_single_topic"]
+    keys = ["engine", "hide_irrelevant", "elapsed_sec", "questions_asked", "doc_recall", "hidden_recall", "unsupported",
+            "question_from_memory", "question_redundant", "question_single_topic",
+            "tool_searches", "tool_searches_without_relevant", "tool_searches_empty"]
     for k in keys:
         if k in r:
             print(f"{k:24} {r[k]}")
-    for label, usage in (("agent", r["agent_usage"]), ("sim+judge", r["side_usage"])):
+    for label, usage in (("agent", r["agent_usage"]), ("persona", r.get("persona_usage")), ("judge", r.get("judge_usage"))):
         if usage:
             print(f"{label + ' usage':24} req={usage['requests']} in={usage['input_tokens']:,} out={usage['output_tokens']:,} "
                   f"cache_read={usage['cache_read_input_tokens']:,} ${usage.get('estimated_usd', 0):.2f}")
