@@ -142,8 +142,8 @@ def test_offline_pipeline_applies_precedence_between_documents():
     assert team["fields"]["contact"] == "내선 2222"
     assert team["conflicts"] and team["conflicts"][0]["dropped"] == "내선 1111"
     doc = agent.finish("p1", kb).snapshot["document"]
-    assert "**자동으로 처리한 정보 충돌**" in doc
-    assert "정보보호팀 · 연락처: '내선 2222'(연락망_신.xlsx) 적용, '내선 1111'(연락망_구.xlsx) 제외" in doc
+    assert "| 내선 2222 |" in doc and "| 내선 1111 |" not in doc  # 표에는 적용한 값만(근거 인용문은 그대로)
+    assert "자동으로 처리한 정보 충돌" not in doc
 
 
 def test_user_answer_survives_reanalysis_with_newer_document():
@@ -158,15 +158,16 @@ def test_user_answer_survives_reanalysis_with_newer_document():
     assert team["fields"]["contact"] == "내선 9999"  # 훨씬 최신 공식 문서가 와도 인계자 답변이 우선
 
 
-def test_render_lists_resolved_conflicts_only_when_present():
+def test_render_shows_only_applied_value_without_conflict_list():
     slots = empty_slots()
     base = dict(profile={"name": "김민수"}, slots=slots, gaps=[], extras={"overview": "개요", "key_points": []}, sources=[], version=1, today=date(2026, 10, 11))
-    assert "자동으로 처리한 정보 충돌" not in render_document(**base)
     slot = slots["stakeholders"]
     put(slot, "내선 1111", {**OFFICIAL, "created_at": "2026-09-01"}, label="공식 문서")
     put(slot, "내선 2222", {**MINUTES, "created_at": "2026-10-01"}, label="회의록")
+    assert slot["items"][0]["conflicts"]  # 처리 내역은 상태에 남는다
     md = render_document(**base)
-    assert "'내선 1111'(공식 문서) 적용, '내선 2222'(회의록) 제외 — 공식 문서 우선" in md
+    assert "내선 1111" in md and "내선 2222" not in md  # 문서에는 적용한 값만 쓴다
+    assert "자동으로 처리한 정보 충돌" not in md
 
 
 # ---------------------------------------------------------------- resolve_conflicts 노드(후보 모으기 → 확정)

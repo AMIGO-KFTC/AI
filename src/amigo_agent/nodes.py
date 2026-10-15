@@ -162,7 +162,7 @@ def resolve_conflicts(state: AgentState, runtime: Runtime[AgentContext]) -> dict
 
     분석(analyze_slot)·답변 해석(interpret)·재분석(reanalyze)은 값을 '후보'로만 모으고, 이 노드가
     인계자 최신 답변 > 공식 문서 > 회의록·메일 > 날짜 없는 자료 순으로 하나를 고른다. 처리 내역은 항목의
-    `conflicts` 에 남고 최종 문서의 '확인 필요 사항'에 표시된다. 같은 함수를 세 지점에 노드로 등록해 쓴다.
+    `conflicts` 에 남는다(최종 문서에는 적용한 값만 쓴다). 같은 함수를 세 지점에 노드로 등록해 쓴다.
     """
     slots = copy.deepcopy(state.get("slots") or {})
     changed = resolve_slots(slots)
