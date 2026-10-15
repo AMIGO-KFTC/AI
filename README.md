@@ -149,7 +149,7 @@ cd ..\FrontEnd; npm install
 |---|---|
 | API 키 없이 시연 (기본) | 그대로 두기 → 규칙 기반 오프라인 엔진 |
 | Claude 로 실제 분석 | `ANTHROPIC_API_KEY=sk-ant-...` |
-| 모델 바꾸기 | `AMIGO_LLM_MODEL=claude-haiku-4-5`(기본, 가장 저렴) / `claude-sonnet-5-5`(약 2배) / `claude-opus-5-5`(약 4배, 품질 가장 좋음) |
+| 모델 바꾸기 | `AMIGO_LLM_MODEL=claude-sonnet-5-5`(기본) / `claude-haiku-4-5`(가장 저렴, 약 절반) / `claude-opus-5-5`(약 2배, 품질 가장 좋음) |
 | 키가 있어도 오프라인 엔진으로 | `AMIGO_LLM_MODE=offline` |
 | Claude API 비용 상한 두기 | `AMIGO_LLM_BUDGET_USD=10` (모든 작업 합계가 $10 를 넘으면 새 AI 작업을 막음, 0 이면 제한 없음) |
 | 컨플루언스 링크 수집 | `CONFLUENCE_BASE_URL` + `CONFLUENCE_PAT`(Server/DC), Cloud 는 `CONFLUENCE_EMAIL` + `CONFLUENCE_API_TOKEN` |
@@ -157,7 +157,7 @@ cd ..\FrontEnd; npm install
 
 - Claude 를 쓰면 작업 화면 오른쪽 위에 이번 작업의 **추정 비용·토큰 수**가, 시작 화면에 **전체 누적 사용량과 남은 예산**이 표시됩니다(배지에 마우스를 올리면 자세히). 추정치이므로 실제 청구액은 <https://platform.claude.com> 의 Usage 에서 확인하고, 그곳의 Limits 에서 월 사용 한도도 걸어 두세요.
 - `.env` 를 고친 뒤에는 백엔드를 껐다가 다시 켭니다(코드 변경 시 자동 재시작은 `.env` 변경을 감지하지 않습니다).
-- 지금 쓰는 엔진은 작업 화면 오른쪽 위 배지(`Claude · claude-haiku-4-5` / `오프라인 규칙 엔진`)나
+- 지금 쓰는 엔진은 작업 화면 오른쪽 위 배지(`Claude · claude-sonnet-5-5` / `오프라인 규칙 엔진`)나
   <http://localhost:8000/api/health> 의 `"engine"` 값(`claude` / `offline`)으로 확인합니다.
 - `.env` 는 `.gitignore` 에 들어 있어 커밋되지 않습니다. API 키를 `.env.example`·코드·채팅에 적지 마세요.
 - 오프라인 엔진은 표 머리글과 정규식으로 항목을 뽑는 **시연용**이라 문장이 거칠고 질문도 정해진 틀을 씁니다. 실제 품질은 Claude 로 확인하세요.
@@ -513,7 +513,7 @@ agent.snapshot(session_id)  # {"stage","waiting","slots","gaps","pending","docum
 
 ## LLM 설정 (Claude)
 
-- 공식 Anthropic Python SDK 로 호출합니다. 기본 모델은 비용이 가장 낮은 `claude-haiku-4-5` 이고, `AMIGO_LLM_MODEL` 로 `claude-sonnet-5-5`·`claude-opus-5-5` 로 바꿀 수 있습니다.
+- 공식 Anthropic Python SDK 로 호출합니다. 기본 모델은 `claude-sonnet-5-5` 이고, `AMIGO_LLM_MODEL` 로 비용이 가장 낮은 `claude-haiku-4-5` 나 `claude-opus-5-5` 로 바꿀 수 있습니다.
   Haiku 4.5 는 effort·서버 측 fallbacks 를 지원하지 않으므로 그 모델에는 보내지 않습니다(`llm.py` 의 `MODEL_FEATURES`).
 - **구조화 출력**(`output_config.format` JSON 스키마)으로 결과를 받아 Pydantic 으로 검증합니다.
 - **도구 호출**: `search_documents`(strict 스키마)를 모델이 필요할 때 호출하고, 결과를 `[E번호]` 근거로 돌려줍니다.
@@ -530,7 +530,7 @@ agent.snapshot(session_id)  # {"stage","waiting","slots","gaps","pending","docum
 |---|---|---|
 | `ANTHROPIC_API_KEY` | | Claude API 키(또는 `ant auth login` 프로필) |
 | `AMIGO_LLM_MODE` | `auto` | `auto` / `claude` / `offline` |
-| `AMIGO_LLM_MODEL` | `claude-haiku-4-5` | 사용할 모델(`claude-sonnet-5-5`, `claude-opus-5-5`) |
+| `AMIGO_LLM_MODEL` | `claude-sonnet-5-5` | 사용할 모델(`claude-haiku-4-5`, `claude-opus-5-5`) |
 | `AMIGO_EFFORT_ANALYSIS` / `_CHAT` / `_COMPOSE` | `medium` / `low` / `medium` | 단계별 effort |
 | `AMIGO_LLM_FALLBACKS` | `true` | 서버 측 거절 fallback |
 | `AMIGO_LLM_TIMEOUT` | `300` | API 요청 제한 시간(초) |

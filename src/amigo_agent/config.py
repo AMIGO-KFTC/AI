@@ -6,8 +6,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# 비용을 아끼려고 기본은 Claude Haiku 4.5. 품질이 더 필요하면 AMIGO_LLM_MODEL=claude-sonnet-5-5 또는 claude-opus-5-5
-DEFAULT_MODEL = "claude-haiku-4-5"
+# 기본은 Claude Sonnet 5.5. 비용을 줄이려면 AMIGO_LLM_MODEL=claude-haiku-4-5(약 절반), 품질이 더 필요하면 claude-opus-5-5(약 2배)
+DEFAULT_MODEL = "claude-sonnet-5-5"
 
 
 def _env_int(name: str, default: int) -> int:

@@ -197,12 +197,22 @@ def test_question_plan_drops_duplicates_and_orders(kb):
 
 
 def test_haiku_requests_skip_unsupported_parameters(kb):
-    """기본 모델(Haiku 4.5)에는 effort·fallbacks 를 보내지 않는다(보내면 400)."""
+    """Haiku 4.5 에는 effort·fallbacks 를 보내지 않는다(보내면 400)."""
     client = FakeClient()
-    config = AgentConfig(llm_mode="claude", max_concurrency=1)
-    assert config.model == "claude-haiku-4-5"
+    config = AgentConfig(llm_mode="claude", model="claude-haiku-4-5", max_concurrency=1)
     HandoverAgent(config, client=client).start("h1", PROFILE, kb)
     call = client.messages.calls[0]
     assert call["model"] == "claude-haiku-4-5"
     assert "effort" not in call["output_config"] and call["output_config"]["format"]["type"] == "json_schema"
     assert "fallbacks" not in call and "betas" not in call
+
+
+def test_default_model_is_sonnet_and_sends_effort(kb, monkeypatch):
+    monkeypatch.delenv("AMIGO_LLM_MODEL", raising=False)
+    client = FakeClient()
+    config = AgentConfig(llm_mode="claude", max_concurrency=1)
+    assert config.model == "claude-sonnet-5-5"
+    HandoverAgent(config, client=client).start("s1", PROFILE, kb)
+    call = client.messages.calls[0]
+    assert call["model"] == "claude-sonnet-5-5"
+    assert call["output_config"].get("effort") == "medium"
