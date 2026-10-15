@@ -538,3 +538,4 @@ agent.snapshot(session_id)  # {"stage","waiting","slots","gaps","pending","docum
 | `AMIGO_MAX_GAPS_PER_SLOT` | `2` | 슬롯당 질문 후보 수 |
 | `AMIGO_MAX_CONCURRENCY` | `3` | 슬롯 병렬 분석 수(최소 2) |
 | `AMIGO_SEARCH_TOP_K`, `AMIGO_MAX_TOOL_ROUNDS` | `6`, `3` | 검색 결과 수, 도구 호출 횟수 |
+| `AMIGO_HIDE_IRRELEVANT` | `true` | `search_documents` 도구 결과에서 RAG 가 '질문과 관련 없음'으로 판정한 조각을 숨기고 "자료에 없을 가능성이 큼"이라고 알림. 장별 기본 검색(넓은 주제 탐색)에는 적용하지 않음. 판정 기준은 RAG 의 `AMIGO_RAG_MIN_RELEVANCE` |

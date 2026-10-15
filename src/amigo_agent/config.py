@@ -39,6 +39,9 @@ class AgentConfig:
     max_gaps_per_slot: int = field(default_factory=lambda: _env_int("AMIGO_MAX_GAPS_PER_SLOT", 2))
     max_concurrency: int = field(default_factory=lambda: _env_int("AMIGO_MAX_CONCURRENCY", 3))
     search_top_k: int = field(default_factory=lambda: _env_int("AMIGO_SEARCH_TOP_K", 6))
+    # search_documents 도구 결과에서 질문과 관련 없다고 판정된 조각을 숨기고 "자료에 없을 가능성이 큼"이라고 알린다.
+    # (장별 기본 검색은 여러 주제를 묶은 넓은 탐색이라 이 판정을 적용하지 않는다.)
+    hide_irrelevant: bool = field(default_factory=lambda: _env_bool("AMIGO_HIDE_IRRELEVANT", True))
     max_tool_rounds: int = field(default_factory=lambda: _env_int("AMIGO_MAX_TOOL_ROUNDS", 3))
     request_timeout: float = field(default_factory=lambda: float(os.getenv("AMIGO_LLM_TIMEOUT", "300")))
 
