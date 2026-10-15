@@ -12,7 +12,7 @@
 - tool_searches  : 모델이 search_documents 도구로 직접 한 검색 수와, 그중 '관련 있는 결과가 없다'는 응답을 받은 수(--hide-irrelevant on|off 로 A/B)
 - usage          : 에이전트의 API 호출 수·토큰·추정 비용(모의 인계자·심사 비용은 따로 표시)
 
-심사는 AMIGO_EVAL_JUDGE_MODEL(기본 claude-sonnet-5-5), 모의 인계자는 claude-opus-5-5 를 쓴다.
+에이전트(--agent-model / AMIGO_EVAL_AGENT_MODEL), 모의 인계자(AMIGO_EVAL_PERSONA_MODEL), 심사(AMIGO_EVAL_JUDGE_MODEL)는 모두 기본 claude-sonnet-5-5 를 쓴다.
 모의 인계자는 gold.PERSONA 의 기억만으로 답하는 Claude 이다. 실제 API 를 쓰므로 실행할 때마다 비용이 든다.
 """
 
@@ -40,7 +40,7 @@ from amigo_rag import KnowledgeBase, RAGSettings
 sys.path.insert(0, str(Path(__file__).parent))
 from gold import DOC_FACTS, HIDDEN_FACTS, PERSONA  # noqa: E402
 
-MODEL = "claude-opus-5-5"  # 모의 인계자
+MODEL = os.getenv("AMIGO_EVAL_PERSONA_MODEL", "claude-sonnet-5-5")  # 모의 인계자
 JUDGE_MODEL = os.getenv("AMIGO_EVAL_JUDGE_MODEL", "claude-sonnet-5-5")  # 심사
 SAMPLES = Path(__file__).resolve().parents[2] / "RAG" / "samples"
 PROFILE = {
@@ -179,7 +179,7 @@ def build_kb() -> tuple[KnowledgeBase, str]:
 def run(args: argparse.Namespace) -> dict[str, Any]:
     client = anthropic.Anthropic(max_retries=3)
     persona_meter, judge_meter = UsageMeter(), UsageMeter()
-    config = AgentConfig(llm_mode=args.mode, max_questions=args.questions, hide_irrelevant=args.hide_irrelevant == "on")
+    config = AgentConfig(llm_mode=args.mode, model=args.agent_model, max_questions=args.questions, hide_irrelevant=args.hide_irrelevant == "on")
     agent = HandoverAgent(config)
     raw_kb, sources = build_kb()
     kb = LoggingKB(raw_kb)
@@ -224,6 +224,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "hidden_facts": hidden_hits,
         "agent_usage": agent.usage(),
         "hide_irrelevant": config.hide_irrelevant,
+        "agent_model": config.model,
+        "persona_model": MODEL,
         "judge_model": None if args.no_judge else JUDGE_MODEL,
     }
     default_queries = {q for spec in SLOTS for q in spec.queries} | {PROFILE["duties"]}
@@ -257,6 +259,7 @@ def main() -> int:
     parser.add_argument("--questions", type=int, default=8, help="최대 질문 수(AMIGO_MAX_QUESTIONS)")
     parser.add_argument("--out", default="evals/runs/latest")
     parser.add_argument("--hide-irrelevant", choices=["on", "off"], default="on", help="search_documents 의 '관련 없음' 숨김(AMIGO_HIDE_IRRELEVANT)")
+    parser.add_argument("--agent-model", default=os.getenv("AMIGO_EVAL_AGENT_MODEL", "claude-sonnet-5-5"), help="평가할 에이전트의 모델(서비스 기본값 AMIGO_LLM_MODEL 과 별개)")
     parser.add_argument("--no-judge", action="store_true", help="Claude 심사 생략(환각·질문 품질 점수 없음)")
     r = run(parser.parse_args())
     keys = ["engine", "hide_irrelevant", "elapsed_sec", "questions_asked", "doc_recall", "hidden_recall", "unsupported",
