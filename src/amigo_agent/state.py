@@ -33,7 +33,7 @@ class SlotItem(TypedDict, total=False):
     origin: str  # "document" | "user"
     confirmed: bool
     field_meta: dict[str, dict[str, Any]]  # 필드별로 현재 값의 출처 순위·시각·출처 표기
-    conflicts: list[dict[str, Any]]  # 자동으로 처리한 정보 충돌 내역(최종 검토용)
+    conflicts: list[dict[str, Any]]  # 자동으로 처리한 정보 충돌 내역(상태에만 남고 문서에는 싣지 않음)
     candidates: dict[str, list[dict[str, Any]]]  # 아직 확정하지 않은 필드별 후보 값(resolve_conflicts 노드가 확정하고 지움)
 
 

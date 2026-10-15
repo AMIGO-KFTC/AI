@@ -62,19 +62,6 @@ def _render_cards(out: list[str], spec, items: list[dict], cites: _Citations) ->
         out += [f"| 근거 | {cites.refs(item)} |", ""]
 
 
-def _conflict_lines(active, slots: dict[str, SlotState]) -> list[str]:
-    lines: list[str] = []
-    for spec in active:
-        for item in (slots.get(spec.key) or {}).get("items", []):
-            for c in item.get("conflicts") or []:
-                lines.append(
-                    f"- [{spec.title}] {item_label(spec, item)} · {spec.label(c['field'])}: "
-                    f"'{_cell(c['applied'])}'({c.get('applied_label') or '출처 미상'}) 적용, "
-                    f"'{_cell(c['dropped'])}'({c.get('dropped_label') or '출처 미상'}) 제외 — {c['reason']}"
-                )
-    return lines
-
-
 # 관계 유형별 화살표 색. 요청·보고는 담당자에서 상대 방향, 협의는 양방향.
 RELATION_COLOR = {"요청": "#2563eb", "협의": "#16a34a", "보고": "#ea580c"}
 
@@ -166,12 +153,6 @@ def render_document(
     else:
         out.append("- 없음")
     out.append("")
-
-    resolved = _conflict_lines(active, slots)
-    if resolved:
-        out += ["**자동으로 처리한 정보 충돌** (우선순위: 인계자 최신 답변 > 공식 문서 > 회의록·메일 > 날짜 없는 자료. 최종 검토 때 확인해 주세요)", ""]
-        out += resolved
-        out.append("")
 
     out += [f"## {len(active) + 3}. 근거 자료", ""]
     if cites.entries:
