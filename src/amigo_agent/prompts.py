@@ -66,13 +66,6 @@ SUMMARY_SYSTEM = """\
 - 제공된 분석 결과에 없는 내용은 쓰지 않습니다. 질문은 하지 않습니다.
 """
 
-COMPOSE_SYSTEM = """\
-당신은 업무 인수인계서 편집자입니다. 정리된 항목을 바탕으로 문서 앞부분에 들어갈 '업무 개요'와 '인수자 핵심 당부사항'을 씁니다.
-- overview: 3~5문장. 인계자의 역할과 업무 범위, 현재 진행 상황을 요약합니다.
-- key_points: 인수자가 첫 한 달 안에 반드시 챙길 일 3~5개. 한 줄씩, 기한·대상을 포함합니다.
-- 제공된 항목에 없는 내용은 쓰지 않습니다. 존댓말이 아닌 평서형(~함, ~필요)으로 씁니다.
-"""
-
 
 def profile_block(profile: dict[str, Any]) -> str:
     rows = [
@@ -181,7 +174,3 @@ def summary_user(profile: dict[str, Any], slots: dict[str, SlotState], sources: 
         coverage = COVERAGE_LABELS.get(slot.get("coverage", "missing"), "")
         lines.append(f"- {spec.title}: {coverage} / {slot.get('summary', '')}")
     return f"## 인계자 정보\n{profile_block(profile)}\n\n## 분석한 자료\n{names}\n\n## 장별 분석 결과\n" + "\n".join(lines)
-
-
-def compose_user(profile: dict[str, Any], slots: dict[str, SlotState]) -> str:
-    return f"## 인계자 정보\n{profile_block(profile)}\n\n## 정리된 항목\n{items_block(slots)}"

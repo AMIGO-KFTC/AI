@@ -9,7 +9,7 @@ import re
 from types import SimpleNamespace
 
 from amigo_agent import AgentConfig, HandoverAgent
-from amigo_agent.prompts import ANALYSIS_SYSTEM, COMPOSE_SYSTEM, INTERPRET_SYSTEM, SUMMARY_SYSTEM
+from amigo_agent.prompts import ANALYSIS_SYSTEM, INTERPRET_SYSTEM, SUMMARY_SYSTEM
 from amigo_agent.template import SLOT_BY_KEY, SLOTS
 
 from conftest import PROFILE
@@ -60,16 +60,14 @@ class FakeMessages:
                         {
                             "intent": "answer",
                             "updates": [
-                                {"slot": "stakeholders", "item_id": item_id, "title": "재무팀", "fields": [{"key": "contact", "value": "내선 2345"}], "evidence_ids": []}
+                                {"slot": "stakeholders", "item_id": item_id, "title": "재무팀", "fields": [{"key": "project", "value": "홈페이지 리뉴얼"}], "evidence_ids": []}
                             ],
                             "resolved_gap_ids": [gap_id],
-                            "reply": "재무팀 박지훈 차장의 연락처를 내선 2345 로 정리했어요. 맞으면 '네', 고칠 부분이 있으면 말씀해 주세요.",
+                            "reply": "재무팀과의 협의를 '홈페이지 리뉴얼' 프로젝트로 정리했어요. 맞으면 '네', 고칠 부분이 있으면 말씀해 주세요.",
                         }
                     )
                 ]
             )
-        if system == COMPOSE_SYSTEM:
-            return response([text_block({"overview": "홈페이지 운영 전반을 인계합니다.", "key_points": ["11월 웹 접근성 인증 갱신", "리뉴얼 예산 승인 확인"]})])
         raise AssertionError("unexpected call")
 
 
@@ -77,13 +75,13 @@ def analysis_payload(spec, messages):
     fields = {f.key: "" for f in spec.fields}
     first = dict(fields)
     if spec.key == "stakeholders":
-        first.update(party="재무팀", person="박지훈 차장", detail="대금 지급 협의")
+        first.update(party="재무팀", discussed="대금 지급 협의")
         evidence = ["E1"] if "E1" in json.dumps([m["content"] for m in messages], ensure_ascii=False, default=str) else []
         items = [
             {"title": "재무팀", "fields": first, "evidence_ids": evidence + ["E99"]},
             {"title": "근거 없는 업체", "fields": dict(fields, party="근거 없는 업체"), "evidence_ids": ["E99"]},
         ]
-        gaps = [{"description": "재무팀 연락처 없음", "question": "재무팀 박지훈 차장의 연락처를 알려 주시겠어요?", "priority": "high", "related_item_title": "재무팀", "ask_for_document": False}]
+        gaps = [{"description": "재무팀 관련 프로젝트 없음", "question": "재무팀과는 어느 프로젝트에서 협의하셨나요?", "priority": "high", "related_item_title": "재무팀", "ask_for_document": False}]
         return {"items": items, "coverage": "partial", "summary": "재무팀과 협업", "gaps": gaps}
     items = []
     for n in range(spec.min_items):
@@ -112,7 +110,7 @@ def test_claude_engine_end_to_end(kb):
     assert agent.usage()["requests"] == len(usage_events)
     assert [m["kind"] for m in result.messages] == ["summary", "question"]
     assert result.messages[0]["content"].startswith("자료 5건에서")
-    assert "재무팀 박지훈 차장의 연락처" in result.messages[1]["content"]
+    assert "재무팀과는 어느 프로젝트에서 협의하셨나요?" in result.messages[1]["content"]
 
     contacts = snap["slots"]["stakeholders"]
     assert [it["title"] for it in contacts["items"]] == ["재무팀"]  # 근거 없는 항목은 버린다
@@ -138,10 +136,10 @@ def test_claude_engine_end_to_end(kb):
     assert call["tools"][0]["name"] == "search_documents" and call["tools"][0]["strict"] is True
 
     # 답변 해석 → 교차 확인 → 확인
-    result = agent.send_message("c1", "재무팀은 내선 2345 로 연락하면 됩니다", kb)
+    result = agent.send_message("c1", "재무팀과는 홈페이지 리뉴얼 프로젝트에서 협의했어요", kb)
     assert result.messages[0]["kind"] == "confirm"
     item = result.snapshot["slots"]["stakeholders"]["items"][0]
-    assert item["fields"]["contact"] == "내선 2345"
+    assert item["fields"]["project"] == "홈페이지 리뉴얼"
     assert any(c["label"].startswith("인계자 답변") for c in item["citations"])
     interpret_call = next(c for c in client.messages.calls if c["system"][0]["text"] == INTERPRET_SYSTEM)
     assert interpret_call["output_config"]["effort"] == "low"
@@ -149,9 +147,9 @@ def test_claude_engine_end_to_end(kb):
     result = agent.send_message("c1", "네", kb)
     assert result.snapshot["stage"] == "review"  # 남은 질문이 없으면 바로 문서 생성
     doc = result.snapshot["document"]
-    assert "홈페이지 운영 전반을 인계합니다." in doc
-    assert "1. 11월 웹 접근성 인증 갱신" in doc
-    assert "| 재무팀 | - | - | 박지훈 차장 | 내선 2345 | 대금 지급 협의 |" in doc
+    assert "## 1. 업무 개요" not in doc and "인수자 핵심 당부사항" not in doc
+    assert {c["system"][0]["text"] for c in client.messages.calls} <= {ANALYSIS_SYSTEM, INTERPRET_SYSTEM, SUMMARY_SYSTEM}  # 문서 합성에는 모델을 쓰지 않는다
+    assert "| 재무팀 | 홈페이지 리뉴얼 | 대금 지급 협의 | - |" in doc  # 맞는 프로젝트가 없어 따로 모아 보인다
 
 
 def test_slot_output_models_are_strict():

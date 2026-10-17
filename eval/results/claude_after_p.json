@@ -1,0 +1,40 @@
+{
+  "engine": "claude",
+  "parties": {
+    "variants": 24,
+    "ideal_items": 7,
+    "avg_items": 7.0,
+    "recall": 1.0,
+    "precision": 1.0,
+    "f1": 1.0,
+    "wrong_merges": 0,
+    "dropped_variants": 0,
+    "sample_titles": [
+      "IT지원팀 최영호 과장과의 협의",
+      "인사팀과의 협의",
+      "재무팀 김하나 대리와의 협의",
+      "재무팀 박지훈 차장과의 협의"
+    ]
+  },
+  "parties_holdout": {
+    "variants": 20,
+    "ideal_items": 8,
+    "avg_items": 9.0,
+    "recall": 0.842,
+    "precision": 1.0,
+    "f1": 0.914,
+    "wrong_merges": 0,
+    "dropped_variants": 0,
+    "sample_titles": [
+      "(주)유니온 서윤아 PM과의 협의",
+      "(주)유니온과의 협의",
+      "감사실과의 협의",
+      "법무팀 박서준 사원과의 협의",
+      "법무팀 이수진 과장과의 협의"
+    ]
+  },
+  "claude_cost": {
+    "usd": 0.0,
+    "requests": 32
+  }
+}

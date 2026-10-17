@@ -18,6 +18,7 @@ on_event 콜백은 진행 중 발생하는 이벤트를 즉시 받는다.
 
 from __future__ import annotations
 
+import copy
 import sqlite3
 import threading
 from dataclasses import dataclass, field
@@ -29,10 +30,12 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from .config import AgentConfig
+from .edits import apply_gantt_edit
 from .engine import Engine, make_engine
 from .graph import build_graph
 from .kb import KBAdapter
 from .nodes import AgentContext
+from .render import render_document
 from .state import open_gaps
 
 EventHandler = Callable[[dict[str, Any]], None]
@@ -118,6 +121,24 @@ class HandoverAgent:
             if self.is_waiting(thread_id):
                 return TurnResult(snapshot=self.snapshot(thread_id))
             return self._run(thread_id, None, kb, on_event)
+
+    def edit_gantt(self, thread_id: str, name: str, nth: int, months: list[int]) -> dict[str, Any]:
+        """화면에서 고친 월별 막대를 계획기간으로 상태에 확정하고, 같은 버전으로 문서를 다시 만든다(Claude 호출 없음)."""
+        with self._lock(thread_id):
+            if not self._has_state(thread_id):
+                raise AgentStateError("아직 분석을 시작하지 않았습니다.")
+            config = self._config(thread_id)
+            values = self.graph.get_state(config).values or {}
+            if not values.get("document"):
+                raise AgentStateError("아직 생성된 인수인계서가 없습니다.")
+            slots = copy.deepcopy(values.get("slots") or {})
+            key = apply_gantt_edit(slots, name, nth, months)
+            if key is None:
+                raise AgentStateError("고칠 일정 행을 찾지 못했습니다.")
+            version = int(values.get("document_version") or 1)
+            markdown = render_document(profile=values.get("profile", {}), slots=slots, gaps=values.get("gaps") or [], sources=values.get("sources") or [], version=version)
+            self.graph.update_state(config, {"slots": {key: slots[key]}, "document": markdown})
+            return {"markdown": markdown, "version": version}
 
     def delete(self, thread_id: str) -> None:
         self.checkpointer.delete_thread(thread_id)

@@ -1,0 +1,95 @@
+{
+  "engine": "offline",
+  "periods": {
+    "cases": 59,
+    "accuracy": 1.0,
+    "readable_accuracy": 1.0,
+    "missed": 0,
+    "wrong": 0,
+    "invented": 0,
+    "invented_rate": 0.0,
+    "failures": []
+  },
+  "periods_holdout": {
+    "cases": 27,
+    "accuracy": 1.0,
+    "readable_accuracy": 1.0,
+    "missed": 0,
+    "wrong": 0,
+    "invented": 0,
+    "invented_rate": 0.0,
+    "failures": []
+  },
+  "parties": {
+    "variants": 24,
+    "ideal_items": 7,
+    "avg_items": 7.0,
+    "recall": 1.0,
+    "precision": 1.0,
+    "f1": 1.0,
+    "wrong_merges": 0,
+    "dropped_variants": 0,
+    "sample_titles": [
+      "IT지원팀 최영호 과장",
+      "인사팀",
+      "재무팀 김하나 대리",
+      "재무팀 박지훈 차장"
+    ]
+  },
+  "parties_holdout": {
+    "variants": 20,
+    "ideal_items": 8,
+    "avg_items": 9.0,
+    "recall": 0.947,
+    "precision": 1.0,
+    "f1": 0.973,
+    "wrong_merges": 0,
+    "dropped_variants": 0,
+    "sample_titles": [
+      "(주)유니온 서윤아 PM",
+      "감사실",
+      "법무팀 박서준 사원",
+      "법무팀 이수진 과장"
+    ]
+  },
+  "questions": {
+    "기본 자료": {
+      "gaps_found": 6,
+      "questions_asked": 6,
+      "missing_required_total": 12,
+      "covered_by_asked": 1.0,
+      "fill_at_5": 0.833,
+      "fill_auc_8": 0.646,
+      "info_per_question": 2.0
+    },
+    "자료 적음": {
+      "gaps_found": 5,
+      "questions_asked": 5,
+      "missing_required_total": 19,
+      "covered_by_asked": 1.0,
+      "fill_at_5": 1.0,
+      "fill_auc_8": 0.789,
+      "info_per_question": 3.8
+    },
+    "자료 많고 빈칸 많음": {
+      "gaps_found": 9,
+      "questions_asked": 9,
+      "missing_required_total": 20,
+      "covered_by_asked": 1.0,
+      "fill_at_5": 0.55,
+      "fill_auc_8": 0.544,
+      "info_per_question": 2.22
+    },
+    "평균": {
+      "questions_asked": 6.667,
+      "covered_by_asked": 1.0,
+      "fill_at_5": 0.794,
+      "fill_auc_8": 0.66,
+      "info_per_question": 2.673
+    }
+  },
+  "claude_cost": {
+    "usd": 0.0,
+    "requests": 0
+  }
+}

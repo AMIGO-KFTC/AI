@@ -32,7 +32,6 @@ class AgentConfig:
     # Claude Opus 5.5 는 thinking 을 끌 수 없고 effort 로 깊이를 조절한다(기본 medium).
     effort_analysis: str = field(default_factory=lambda: os.getenv("AMIGO_EFFORT_ANALYSIS", "medium"))
     effort_chat: str = field(default_factory=lambda: os.getenv("AMIGO_EFFORT_CHAT", "low"))
-    effort_compose: str = field(default_factory=lambda: os.getenv("AMIGO_EFFORT_COMPOSE", "medium"))
     # 안전 분류기가 요청을 거절하면 서버 측에서 권장 모델로 재시도(server-side fallbacks)
     use_fallbacks: bool = field(default_factory=lambda: _env_bool("AMIGO_LLM_FALLBACKS", True))
     max_questions: int = field(default_factory=lambda: _env_int("AMIGO_MAX_QUESTIONS", 12))

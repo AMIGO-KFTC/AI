@@ -136,7 +136,7 @@ def normalize_title(text: str) -> str:
     return re.sub(r"[\s\W_]+", "", (text or "").lower())
 
 
-def find_item(items: list[SlotItem], *, item_id: str = "", title: str = "") -> SlotItem | None:
+def find_item(items: list[SlotItem], *, item_id: str = "", title: str = "", fuzzy: bool = True) -> SlotItem | None:
     if item_id:
         for item in items:
             if item.get("id") == item_id:
@@ -145,7 +145,7 @@ def find_item(items: list[SlotItem], *, item_id: str = "", title: str = "") -> S
     if key:
         for item in items:
             other = normalize_title(item.get("title", ""))
-            if other and (other == key or (min(len(other), len(key)) >= 4 and (other in key or key in other))):
+            if other and (other == key or (fuzzy and min(len(other), len(key)) >= 4 and (other in key or key in other))):
                 return item
     return None
 
@@ -250,7 +250,8 @@ def upsert_item(
     clean = {k: str(v).strip() for k, v in fields.items() if spec.field(k) and str(v).strip()}
     if title and spec.title_field not in clean:
         clean[spec.title_field] = title.strip()
-    existing = find_item(items, item_id=item_id, title=title or clean.get(spec.title_field, ""))
+    # 협의 상대는 제목이 부분적으로 겹쳐도('재무팀' ⊂ '재무팀 박지훈') 다른 사람일 수 있어 정확히 같을 때만 같은 항목으로 본다(같은 상대는 parties.py 가 합친다)
+    existing = find_item(items, item_id=item_id, title=title or clean.get(spec.title_field, ""), fuzzy=spec.key not in ("stakeholders", "leave_contacts"))
     if existing is None:
         existing = {
             "id": new_id(spec.key),
