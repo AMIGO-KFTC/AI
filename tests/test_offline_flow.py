@@ -16,29 +16,33 @@ def test_full_flow_stage_1_to_4(kb):
 
     stages = [e["stage"] for e in seen if e["type"] == "stage"]
     assert stages[:2] == ["analyzing", "summary"]
-    assert {e["key"] for e in seen if e["type"] == "slot"} == {"overview", "stakeholders", "regular", "irregular", "systems", "dept_notes"}
+    assert {e["key"] for e in seen if e["type"] == "slot"} == {"overview", "regular", "irregular", "stakeholders", "systems", "dept_notes"}
     assert kinds(result) == ["summary", "question"]
     snap = result.snapshot
     assert snap["waiting"] and snap["stage"] == "qna" and snap["question_count"] == 1
     assert snap["slots"]["overview"]["coverage"] == "sufficient"
     assert any(c["label"] == "업무정의서.pdf p.1" for it in snap["slots"]["overview"]["items"] for c in it["citations"])
 
-    # 한 번에 하나의 질문: 질문 메시지에는 슬롯 하나와 gap_id 하나만 있다
+    # 한 번에 하나의 질문: 질문 메시지에는 슬롯 하나와 gap_id 하나만 있다. 첫 질문은 협업관계의 '프로젝트명'
     question = result.messages[-1]
-    assert question["meta"]["gap_id"] == snap["current_gap_id"]
+    assert question["meta"]["gap_id"] == snap["current_gap_id"] and question["meta"]["slot"] == "stakeholders"
 
     # 답변 → 교차 확인 메시지 + 확인 대기
-    result = agent.send_message("s1", "재무팀 박지훈 차장 연락처는 내선 2345 입니다", kb)
+    result = agent.send_message("s1", "CD공동망 고도화 프로젝트에서 협의했습니다", kb)
     assert kinds(result) == ["confirm"]
-    assert "내선 2345" in result.messages[0]["content"]
+    assert "CD공동망 고도화" in result.messages[0]["content"]
     assert result.snapshot["pending"]["refs"]
-    assert kb.added and "내선 2345" in kb.added[-1]  # 답변이 지식베이스에도 반영된다
+    assert kb.added and "CD공동망 고도화" in kb.added[-1]  # 답변이 지식베이스에도 반영된다
 
-    # 확인 → 다음 질문(ack 포함)
+    # 확인 → 다음 질문(ack 포함): 시스템 접근 권한의 신청·이관 방법
     result = agent.send_message("s1", "네", kb)
     assert kinds(result) == ["question"]
     assert result.messages[0]["content"].startswith("확인했습니다.")
     assert result.snapshot["question_count"] == 2
+    assert result.messages[0]["meta"]["slot"] == "systems"
+    agent.send_message("s1", "신청은 내선 2345 로 연락합니다", kb)
+    result = agent.send_message("s1", "네", kb)
+    assert result.snapshot["question_count"] == 3
 
     # 건너뛰기
     result = agent.skip("s1", kb)
@@ -52,8 +56,10 @@ def test_full_flow_stage_1_to_4(kb):
     version = snap["document_version"]
     doc = snap["document"]
     assert doc.startswith("# 업무 인수인계서")
-    for heading in ("## 2. 업무 소개", "## 3. 이해관계자", "## 4. 정기 업무", "## 8. 확인 필요 사항", "## 9. 근거 자료"):
+    for heading in ("## 1. 업무 단위 요약 + 일정 명세표", "## 2. 정기업무", "## 3. 비정기 업무(프로젝트성)", "## 4. 시스템 접근 권한", "## 5. 부서별 추가 자료", "## 6. 확인 필요 사항", "## 7. 근거 자료"):
         assert heading in doc
+    assert "## 1. 업무 개요" not in doc and "비정기 업무 협업관계 및 협의사항\n" not in doc  # 개요 장도, 협업관계 별도 장도 없다
+    assert "CD공동망 고도화" in doc  # 맞는 프로젝트가 없는 협업관계는 '프로젝트 미지정'으로 모아 보인다
     assert "내선 2345" in doc
     assert "인계자 답변" in doc
     assert "(인계자 미확인)" in doc  # 건너뛴 질문은 확인 필요 사항으로 남는다
@@ -66,50 +72,51 @@ def test_full_flow_stage_1_to_4(kb):
 def test_correction_overwrites_last_recorded_fields(kb):
     agent = HandoverAgent()
     agent.start("s2", PROFILE, kb)
-    agent.send_message("s2", "재무팀 박지훈 차장은 내선 2345", kb)
-    result = agent.send_message("s2", "아니, 내선 2346 이에요", kb)
+    # 첫 질문은 협업관계의 '프로젝트명'
+    agent.send_message("s2", "홈페이지 리뉴얼 건입니다", kb)
+    result = agent.send_message("s2", "아니, 개인정보처리방침 개정이에요", kb)
     assert kinds(result) == ["confirm"]
-    assert "내선 2346" in result.messages[0]["content"]
+    assert "개인정보처리방침 개정" in result.messages[0]["content"]
     agent.send_message("s2", "네", kb)
-    contacts = agent.snapshot("s2")["slots"]["stakeholders"]["items"]
-    finance = next(it for it in contacts if it["title"] == "재무팀")
-    assert finance["fields"]["contact"] == "내선 2346"
+    partners = agent.snapshot("s2")["slots"]["stakeholders"]["items"]
+    finance = next(it for it in partners if it["title"].startswith("재무팀"))
+    assert "개인정보처리방침 개정" in finance["fields"]["project"] and "홈페이지 리뉴얼" not in finance["fields"]["project"]
     assert finance["confirmed"] is True
-
 
 
 def test_repeated_corrections_stop_after_two_rounds(kb):
     """정리 확인 → 고친 내용 확인 다음의 고침은 더 묻지 않고 반영한 뒤 다음 질문으로 넘어간다(무한 반복 방지)."""
     agent = HandoverAgent()
     agent.start("s5", PROFILE, kb)
-    assert kinds(agent.send_message("s5", "재무팀 박지훈 차장 연락처는 내선 2345 입니다", kb)) == ["confirm"]
-    first = agent.send_message("s5", "아니요, 내선 2346 이에요", kb)
+    assert kinds(agent.send_message("s5", "홈페이지 리뉴얼 건입니다", kb)) == ["confirm"]
+    first = agent.send_message("s5", "아니요, 개인정보처리방침 개정이에요", kb)
     assert kinds(first) == ["confirm"]
     assert "요, " not in first.messages[0]["content"]  # '아니요' 를 통째로 떼어 낸다
-    second = agent.send_message("s5", "아니요, 내선 2347 이에요", kb)
+    second = agent.send_message("s5", "아니요, 웹 접근성 개선이에요", kb)
     assert kinds(second) == ["question"]
     assert second.messages[0]["content"].startswith("고쳐 주신 내용으로 반영해 둘게요.")
     assert not second.snapshot["pending"] and second.snapshot["question_count"] == 2
-    finance = next(it for it in second.snapshot["slots"]["stakeholders"]["items"] if it["title"] == "재무팀")
-    assert finance["fields"]["contact"] == "내선 2347"
+    finance = next(it for it in second.snapshot["slots"]["stakeholders"]["items"] if it["title"].startswith("재무팀"))
+    assert "웹 접근성 개선" in finance["fields"]["project"]
+
 
 def test_files_trigger_reanalysis_and_keep_user_answers(kb):
     agent = HandoverAgent()
     agent.start("s3", PROFILE, kb)
-    agent.send_message("s3", "재무팀 박지훈 차장 연락처는 내선 2345", kb)
+    agent.send_message("s3", "홈페이지 리뉴얼 건입니다", kb)
     agent.send_message("s3", "네", kb)
     kb.docs.append(
         {
             "chunk_id": "new1",
-            "text": "| 부서 | 담당자 | 협업 내용 | 연락처 |\n|---|---|---|---|\n| 정보보호팀 | 최영희 주임 | 웹방화벽 정책 | 내선 4567 |",
+            "text": "| 부서 | 담당자 | 프로젝트 | 협업 내용 |\n|---|---|---|---|\n| 정보보호팀 | 최영희 주임 | 홈페이지 리뉴얼 | 웹방화벽 정책 |",
             "metadata": {"source_id": "new", "file_name": "연락망.xlsx", "source_type": "xlsx"},
         }
     )
     result = agent.notify_files("s3", kb, ["연락망.xlsx"])
-    contacts = result.snapshot["slots"]["stakeholders"]["items"]
-    titles = {it["title"]: it for it in contacts}
-    assert titles["정보보호팀"]["fields"]["contact"] == "내선 4567"
-    assert titles["재무팀"]["fields"]["contact"] == "내선 2345"  # 재분석해도 인계자 답변은 유지
+    partners = {it["title"]: it for it in result.snapshot["slots"]["stakeholders"]["items"]}
+    assert partners["정보보호팀 최영희 주임"]["fields"]["discussed"] == "웹방화벽 정책"  # 담당자 열은 협의 상대 이름에 붙는다
+    finance = next(it for it in partners.values() if it["title"].startswith("재무팀"))
+    assert finance["fields"]["project"] == "홈페이지 리뉴얼 건입니다"  # 재분석해도 인계자 답변은 유지
     assert result.messages[-1]["kind"] == "question"
     assert "새 자료(연락망.xlsx)를 반영했어요" in result.messages[-1]["content"]
 

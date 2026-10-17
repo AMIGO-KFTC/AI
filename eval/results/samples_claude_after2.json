@@ -1,0 +1,37 @@
+{
+ "engine": "claude",
+ "repeat": 1,
+ "mean": {
+  "gaps": 8.0,
+  "fill_at_3": 1.0,
+  "fill_at_5": 1.0,
+  "fill_auc_8": 0.938,
+  "info_per_question": 1.5
+ },
+ "spread(max-min)": {
+  "fill_at_3": 0.0,
+  "fill_at_5": 0.0,
+  "fill_auc_8": 0.0
+ },
+ "runs": [
+  {
+   "gaps": 8,
+   "missing_required_total": 12,
+   "fill_at_3": 1.0,
+   "fill_at_5": 1.0,
+   "fill_auc_8": 0.938,
+   "info_per_question": 1.5,
+   "order": [
+    "regular(6)",
+    "regular(6)",
+    "irregular(0)",
+    "stakeholders(0)",
+    "systems(0)",
+    "dept_notes(0)",
+    "stakeholders(0)",
+    "systems(0)"
+   ]
+  }
+ ],
+ "claude_requests": 9
+}

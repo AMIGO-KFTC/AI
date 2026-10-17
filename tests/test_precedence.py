@@ -17,15 +17,15 @@ def cite(meta: dict, label: str = "자료") -> dict:
 
 def put(slot, value, meta=None, origin="document", label="자료", citations=None):
     cites = citations if citations is not None else [cite(meta or {}, label)]
-    return upsert_item(slot, item_id="", title="재무팀", fields={"party": "재무팀", "contact": value}, citations=cites, origin=origin)
+    return upsert_item(slot, item_id="", title="재무팀", fields={"party": "재무팀", "discussed": value}, citations=cites, origin=origin)
 
 
 def stakeholders():
     return empty_slots()["stakeholders"]
 
 
-def contact(slot) -> str:
-    return slot["items"][0]["fields"]["contact"]
+def discussed(slot) -> str:
+    return slot["items"][0]["fields"]["discussed"]
 
 
 OFFICIAL = {"file_name": "업무정의서.pdf", "source_type": "pdf"}
@@ -57,9 +57,9 @@ def test_newer_official_document_wins_even_by_minutes():
     slot = stakeholders()
     put(slot, "내선 1111", {**OFFICIAL, "created_at": "2026-09-01 10:00"}, label="구 문서")
     put(slot, "내선 2222", {**OFFICIAL, "created_at": "2026-09-01 10:01"}, label="신 문서")
-    assert contact(slot) == "내선 2222"
+    assert discussed(slot) == "내선 2222"
     put(slot, "내선 3333", {**OFFICIAL, "created_at": "2026-09-01 09:59"}, label="더 옛 문서")
-    assert contact(slot) == "내선 2222"  # 더 옛 문서는 이기지 못한다
+    assert discussed(slot) == "내선 2222"  # 더 옛 문서는 이기지 못한다
     record = slot["items"][0]["conflicts"][0]
     assert record["applied"] == "내선 2222" and record["dropped"] == "내선 1111" and record["applied_label"] == "신 문서"
     assert "더 최근" in record["reason"]
@@ -69,32 +69,32 @@ def test_rank_beats_recency():
     slot = stakeholders()
     put(slot, "내선 1111", {**OFFICIAL, "created_at": "2026-01-01"}, label="공식 문서")
     put(slot, "내선 2222", {**MINUTES, "created_at": "2026-10-01"}, label="회의록")  # 더 최신이지만 3순위
-    assert contact(slot) == "내선 1111"
+    assert discussed(slot) == "내선 1111"
     put(slot, "내선 3333", {**MAIL, "sent_at": "2026-10-02 09:00"}, label="메일")  # 같은 3순위 아님, 공식이 이김
-    assert contact(slot) == "내선 1111"
+    assert discussed(slot) == "내선 1111"
 
 
 def test_minutes_and_mail_share_a_rank_and_compare_by_time():
     slot = stakeholders()
     put(slot, "내선 1111", {**MINUTES, "created_at": "2026-10-01 09:00"}, label="회의록")
     put(slot, "내선 2222", {**MAIL, "sent_at": "2026-10-01 09:30"}, label="메일")
-    assert contact(slot) == "내선 2222"
+    assert discussed(slot) == "내선 2222"
 
 
 def test_undated_reference_is_weakest_and_dated_beats_undated():
     slot = stakeholders()
     put(slot, "내선 1111", REFERENCE, label="메모")
     put(slot, "내선 2222", {**MINUTES, "created_at": "2020-01-01"}, label="옛 회의록")
-    assert contact(slot) == "내선 2222"
+    assert discussed(slot) == "내선 2222"
     put(slot, "내선 3333", REFERENCE, label="다른 메모")
-    assert contact(slot) == "내선 2222"
+    assert discussed(slot) == "내선 2222"
 
 
 def test_same_rank_same_time_keeps_first_value_but_records_conflict():
     slot = stakeholders()
     put(slot, "내선 1111", REFERENCE, label="메모 A")
     put(slot, "내선 2222", REFERENCE, label="메모 B")
-    assert contact(slot) == "내선 1111"
+    assert discussed(slot) == "내선 1111"
     assert "먼저 확인된 값" in slot["items"][0]["conflicts"][0]["reason"]
 
 
@@ -103,20 +103,20 @@ def test_user_answer_beats_newer_document_and_later_answers_override_earlier_one
     user = {"source_id": "chat", "label": "인계자 답변", "rank": 1, "ts": "2026-10-11T10:00:00", "doc_class": "user"}
     put(slot, "내선 1111", {**OFFICIAL, "created_at": "2026-10-10"}, label="공식 문서")
     put(slot, "내선 2222", origin="user", citations=[user])
-    assert contact(slot) == "내선 2222"
+    assert discussed(slot) == "내선 2222"
     put(slot, "내선 3333", {**OFFICIAL, "created_at": "2026-10-11 12:00"}, label="더 최신 공식 문서")
-    assert contact(slot) == "내선 2222"  # 문서가 더 최신이어도 인계자 답변이 우선
+    assert discussed(slot) == "내선 2222"  # 문서가 더 최신이어도 인계자 답변이 우선
     put(slot, "내선 4444", origin="user", citations=[{**user, "ts": "2026-10-11T10:00:00"}])  # 같은 시각의 번복
-    assert contact(slot) == "내선 4444"
+    assert discussed(slot) == "내선 4444"
     put(slot, "내선 5555", origin="user", citations=[{**user, "ts": "2026-10-11T09:59:00"}])  # 더 이른 답변은 이기지 못한다
-    assert contact(slot) == "내선 4444"
+    assert discussed(slot) == "내선 4444"
 
 
 def test_empty_fields_are_filled_regardless_of_rank():
     slot = stakeholders()
     put(slot, "내선 1111", {**OFFICIAL, "created_at": "2026-10-10"})
-    upsert_item(slot, item_id="", title="재무팀", fields={"person": "박지훈 차장"}, citations=[cite(REFERENCE)], origin="document")
-    assert slot["items"][0]["fields"]["person"] == "박지훈 차장" and contact(slot) == "내선 1111"
+    upsert_item(slot, item_id="", title="재무팀", fields={"project": "홈페이지 리뉴얼"}, citations=[cite(REFERENCE)], origin="document")
+    assert slot["items"][0]["fields"]["project"] == "홈페이지 리뉴얼" and discussed(slot) == "내선 1111"
     assert not slot["items"][0].get("conflicts")
 
 
@@ -126,7 +126,7 @@ def test_beats_handles_missing_meta():
     assert beats({"rank": 1, "ts": None}, {"rank": 1, "ts": None})
 
 
-TABLE = "| 부서 | 담당자 | 협업 내용 | 연락처 |\n|---|---|---|---|\n| 정보보호팀 | 최영희 주임 | 웹방화벽 정책 | {phone} |"
+TABLE = "| 부서 | 담당자 | 프로젝트 | 협업 내용 |\n|---|---|---|---|\n| 정보보호팀 | 최영희 주임 | 홈페이지 리뉴얼 | {phone} |"
 
 
 def _doc(name, phone, **meta):
@@ -138,29 +138,34 @@ def test_offline_pipeline_applies_precedence_between_documents():
     agent = HandoverAgent()
     agent.start("p1", PROFILE, kb)
     items = agent.snapshot("p1")["slots"]["stakeholders"]["items"]
-    team = next(it for it in items if it["title"] == "정보보호팀")
-    assert team["fields"]["contact"] == "내선 2222"
+    team = next(it for it in items if it["title"] == "정보보호팀 최영희 주임")
+    assert team["fields"]["discussed"] == "내선 2222"
     assert team["conflicts"] and team["conflicts"][0]["dropped"] == "내선 1111"
     doc = agent.finish("p1", kb).snapshot["document"]
-    assert "| 내선 2222 |" in doc and "| 내선 1111 |" not in doc  # 표에는 적용한 값만(근거 인용문은 그대로)
+    assert "| 내선 2222 |" in doc and "내선 1111" not in doc  # 문서에는 적용한 값만 쓴다
     assert "자동으로 처리한 정보 충돌" not in doc
 
 
 def test_user_answer_survives_reanalysis_with_newer_document():
-    kb = FakeKB(docs=[_doc("연락망.xlsx", "-", created_at="2026-09-01")])  # 처음 자료에는 연락처가 비어 있다
+    talk_table = "| 부서 | 담당자 | 프로젝트 | 협업 내용 |\n|---|---|---|---|\n| 정보보호팀 | 최영희 주임 | 홈페이지 리뉴얼 | {talk} |"
+    kb = FakeKB(docs=[{"file_name": "연락망.xlsx", "source_type": "xlsx", "created_at": "2026-09-01", "text": talk_table.format(talk="-")}])  # 처음 자료에는 협의 내용이 비어 있다
     agent = HandoverAgent()
-    agent.start("p2", PROFILE, kb)
-    agent.send_message("p2", "정보보호팀 최영희 주임 연락처는 내선 9999 입니다", kb)
+    start = agent.start("p2", PROFILE, kb)
+    snap = start.snapshot
+    while next(g for g in snap["gaps"] if g["id"] == snap["current_gap_id"])["slot"] != "stakeholders":
+        snap = agent.skip("p2", kb).snapshot  # 같은 우선순위에서는 더 많은 정보를 채우는 질문(시스템 권한)을 먼저 묻는다
+    assert next(g for g in snap["gaps"] if g["id"] == snap["current_gap_id"])["slot"] == "stakeholders"  # 협의 표의 '협의한 내용'이 빈 항목도 묻는다
+    agent.send_message("p2", "웹방화벽 정책 변경을 협의했습니다", kb)
     agent.send_message("p2", "네", kb)
-    kb.docs.append({"chunk_id": "n1", "text": TABLE.format(phone="내선 3333"), "metadata": {"source_id": "n1", "file_name": "연락망_최신.xlsx", "source_type": "xlsx", "created_at": "2099-01-01"}})
+    kb.docs.append({"chunk_id": "n1", "text": talk_table.format(talk="보안 점검 일정 협의"), "metadata": {"source_id": "n1", "file_name": "연락망_최신.xlsx", "source_type": "xlsx", "created_at": "2099-01-01"}})
     result = agent.notify_files("p2", kb, ["연락망_최신.xlsx"])
-    team = next(it for it in result.snapshot["slots"]["stakeholders"]["items"] if it["title"] == "정보보호팀")
-    assert team["fields"]["contact"] == "내선 9999"  # 훨씬 최신 공식 문서가 와도 인계자 답변이 우선
+    team = next(it for it in result.snapshot["slots"]["stakeholders"]["items"] if it["title"] == "정보보호팀 최영희 주임")
+    assert "웹방화벽 정책 변경" in team["fields"]["discussed"]  # 훨씬 최신 공식 문서가 와도 인계자 답변이 우선
 
 
 def test_render_shows_only_applied_value_without_conflict_list():
     slots = empty_slots()
-    base = dict(profile={"name": "김민수"}, slots=slots, gaps=[], extras={"overview": "개요", "key_points": []}, sources=[], version=1, today=date(2026, 10, 11))
+    base = dict(profile={"name": "김민수"}, slots=slots, gaps=[], sources=[], version=1, today=date(2026, 10, 11))
     slot = slots["stakeholders"]
     put(slot, "내선 1111", {**OFFICIAL, "created_at": "2026-09-01"}, label="공식 문서")
     put(slot, "내선 2222", {**MINUTES, "created_at": "2026-10-01"}, label="회의록")
@@ -172,7 +177,7 @@ def test_render_shows_only_applied_value_without_conflict_list():
 
 # ---------------------------------------------------------------- resolve_conflicts 노드(후보 모으기 → 확정)
 def _deferred(slot, value, meta, label):
-    return upsert_item(slot, item_id="", title="재무팀", fields={"party": "재무팀", "contact": value}, citations=[cite(meta, label)], origin="document", defer=True)
+    return upsert_item(slot, item_id="", title="재무팀", fields={"party": "재무팀", "discussed": value}, citations=[cite(meta, label)], origin="document", defer=True)
 
 
 def test_deferred_candidates_are_resolved_later_with_same_result_as_immediate():
@@ -189,11 +194,11 @@ def test_deferred_candidates_are_resolved_later_with_same_result_as_immediate():
         put(immediate, value, meta, label=label)
         _deferred(deferred, value, meta, label)
     assert "candidates" in deferred["items"][0]  # 확정 전에는 후보만 모여 있다
-    assert len(deferred["items"][0]["candidates"]["contact"]) == 4
+    assert len(deferred["items"][0]["candidates"]["discussed"]) == 4
     assert resolve_slots({"stakeholders": deferred}) == ["stakeholders"]
     item = deferred["items"][0]
     assert "candidates" not in item
-    assert item["fields"]["contact"] == contact(immediate) == "내선 2222"
+    assert item["fields"]["discussed"] == discussed(immediate) == "내선 2222"
     assert [(c["applied"], c["dropped"]) for c in item["conflicts"]] == [(c["applied"], c["dropped"]) for c in immediate["items"][0]["conflicts"]]
     assert resolve_slots({"stakeholders": deferred}) == []  # 이미 확정한 뒤에는 할 일이 없다
 

@@ -11,10 +11,10 @@ from typing import Any
 
 from ..config import AgentConfig
 from ..kb import Evidence, KBAdapter
+from ..parties import consolidate_parties
 from ..state import Gap, SlotItem, SlotState, evaluate_coverage, item_label, missing_fields, new_id, upsert_item
-from ..template import COVERAGE_LABELS, SLOT_BY_KEY, SLOTS, SlotSpec
+from ..template import COVERAGE_LABELS, MODE_LEAVE, SLOT_BY_KEY, SlotSpec, mode_of, slots_for
 from ..textkit import (
-    extract_contacts,
     extract_parties,
     extract_person,
     infer_cycle,
@@ -24,46 +24,58 @@ from ..textkit import (
 )
 from . import Interpretation, InterpretInput, SlotResult, retrieve_for_slot
 
-# 표 머리글 → 슬롯 필드 매핑
+# 표 머리글 → 슬롯 필드 매핑. 같은 머리글이 여러 필드에 걸릴 수 있어 구체적인 필드를 앞에, 짧은 이름(업무명 등)을 맡는 name 은 맨 뒤에 둔다.
+_UNIT = {
+    "period": ("계획기간", "처리시기", "기간", "일정", "시기"),
+    "note": ("비고",),
+    "name": ("단위업무명", "단위업무", "업무명", "담당업무", "업무"),
+}
 HEADER_SYNONYMS: dict[str, dict[str, tuple[str, ...]]] = {
-    "overview": {
-        "name": ("단위업무명", "업무명", "담당업무", "업무"),
-        "summary": ("업무소개", "주요내용", "업무내용", "내용", "설명"),
-        "guideline": ("업무지침", "지침"),
-        "law": ("관계법령", "법령", "근거법"),
-        "manual": ("업무매뉴얼", "매뉴얼"),
-    },
-    "stakeholders": {
-        "party": ("부서", "기관", "업체", "소속", "협업대상", "이해관계자"),
-        "scope": ("구분", "내외부"),
-        "relation": ("관계유형", "관계"),
-        "person": ("담당자", "성명", "이름", "담당"),
-        "contact": ("연락처", "전화", "내선", "이메일", "메일"),
-        "detail": ("협의내용", "협업내용", "역할", "업무"),
-    },
+    "overview": _UNIT,
+    "leave_units": _UNIT,
     "regular": {
-        "name": ("세부업무명", "업무명", "업무", "작업"),
-        "intro": ("소개", "설명"),
+        "overview": ("업무개요", "개요", "소개", "설명"),
         "cycle": ("주기", "빈도"),
-        "timing": ("시기", "일정", "기한", "시점", "월"),
+        "timing": ("수행시기", "시기", "일정", "기한", "시점", "월"),
         "procedure": ("수행절차", "처리절차", "절차", "방법"),
-        "key_points": ("중요사항", "유의사항", "중요하게"),
-        "decisions": ("주요결정", "결정사항"),
-        "consultations": ("협의사항", "주요협의"),
-        "expectations": ("후임자", "바라는"),
-        "tips": ("팁", "참고자료"),
+        "key_points": ("중점관리사항", "중요사항", "유의사항", "중요하게"),
+        "decisions": ("의사결정", "판단근거", "주요결정", "결정사항"),
+        "collaboration": ("협업", "협의사항", "주요협의"),
+        "future": ("향후과제", "발전방향", "향후"),
+        "references": ("참고자료", "관련근거", "근거", "팁"),
+        "name": ("세부업무명", "업무명", "업무", "작업"),
     },
     "irregular": {
-        "name": ("세부업무명", "과제명", "과제", "프로젝트", "사업명"),
-        "background": ("배경", "소개", "추진배경"),
-        "goal": ("목표", "목적"),
-        "progress": ("진행경과", "진행현황", "현황", "진행상황", "상태", "진척"),
-        "schedule": ("진행일정", "일정", "마감", "기한", "완료예정"),
-        "consultations": ("협의사항", "협의내용"),
-        "open_issues": ("미결과제", "미결", "다음할일", "향후계획", "조치사항", "다음단계", "할일"),
-        "key_points": ("중요사항", "유의사항"),
-        "decisions": ("주요결정", "결정사항"),
-        "expectations": ("후임자", "바라는"),
+        "overview": ("프로젝트개요", "추진배경", "개요", "배경"),
+        "goals": ("목표", "기대성과", "목적"),
+        "progress": ("추진경과", "진행경과", "진행현황", "현황", "경과", "진행상황", "상태", "진척"),
+        "decisions": ("의사결정", "판단근거", "주요결정", "결정사항"),
+        "key_points": ("중점관리사항", "중요사항", "유의사항"),
+        "future": ("향후추진과제", "향후과제", "발전방향", "다음할일", "향후계획", "미결과제", "미결", "할일"),
+        "name": ("프로젝트명", "세부업무명", "과제명", "과제", "프로젝트", "사업명"),
+    },
+    "stakeholders": {
+        "project": ("관련프로젝트", "프로젝트"),
+        "discussed": ("협의내용", "협의한내용", "협업내용", "역할", "업무"),
+        "upcoming": ("추후고려사항", "고려사항", "앞으로필요한협의", "필요한협의", "향후협의"),
+        "_person": ("담당자", "성명", "이름", "담당"),  # 부서 열이 따로 있으면 그 이름에 붙이고, 없으면 이 열이 담당자(팀 또는 개인)다
+        "party": ("협의상대", "부서", "기관", "업체", "소속", "협업대상", "이해관계자"),
+    },
+    "leave_contacts": {
+        "task": ("세부업무명", "관련업무", "업무명"),
+        "discussed": ("대응협조내용", "대응내용", "협조내용", "대응", "협조"),
+        "upcoming": ("추후고려사항", "고려사항"),
+        "_person": ("담당자", "성명", "이름", "문의처", "담당"),
+        "party": ("부서", "기관", "업체", "소속"),
+    },
+    "leave_tasks": {
+        "overview": ("업무개요", "개요", "설명"),
+        "schedule": ("주요일정", "처리사항", "일정", "시기"),
+        "method": ("처리방법", "방법", "절차"),
+        "key_points": ("중점관리사항", "중요사항", "유의사항"),
+        "pending": ("미결사항", "후속조치", "미결"),
+        "references": ("참고자료", "매뉴얼"),
+        "name": ("세부업무명", "업무명", "업무", "작업"),
     },
     "systems": {
         "name": ("시스템명", "시스템", "도구"),
@@ -72,7 +84,7 @@ HEADER_SYNONYMS: dict[str, dict[str, tuple[str, ...]]] = {
         "how_to_get": ("신청이관방법", "신청방법", "이관방법", "신청", "이관", "비고"),
     },
     "dept_notes": {
-        "topic": ("특이사항", "항목", "구분", "관리대상"),
+        "topic": ("추가자료", "특이사항", "항목", "구분", "관리대상"),
         "detail": ("관리내용", "내용", "관리방법", "유의사항"),
         "basis": ("근거지침", "근거", "지침"),
     },
@@ -80,39 +92,27 @@ HEADER_SYNONYMS: dict[str, dict[str, tuple[str, ...]]] = {
 
 # 표가 해당 슬롯의 표로 인정되려면 제목 열 외에 이 중 하나 이상의 열이 있어야 한다
 COMPANION_FIELDS: dict[str, set[str]] = {
-    "overview": {"summary", "guideline", "law", "manual"},
-    "stakeholders": {"person", "contact", "detail", "relation"},
-    "regular": {"cycle", "timing", "procedure"},
-    "irregular": {"background", "goal", "progress", "schedule", "open_issues"},
+    "overview": {"period", "note"},
+    "leave_units": {"period", "note"},
+    "regular": {"cycle", "timing", "procedure", "overview", "decisions"},
+    "irregular": {"overview", "goals", "progress", "future"},
+    "stakeholders": {"discussed", "upcoming", "project", "_person"},
+    "leave_tasks": {"schedule", "method", "overview"},
+    "leave_contacts": {"discussed", "upcoming", "task", "_person"},
     "systems": {"purpose", "access", "how_to_get"},
     "dept_notes": {"detail", "basis"},
 }
 
-SENTENCE_FALLBACK_ONLY = {"overview", "systems", "irregular", "dept_notes"}
+PARTY_SLOTS = ("stakeholders", "leave_contacts")
+SENTENCE_FALLBACK_ONLY = {"overview", "leave_units", "systems", "irregular", "dept_notes"}
 
 DEPT_HINTS = re.compile(r"외주|가맹점|라이선스|라이센스|위탁|특이사항|세부시행세칙")
-EXTERNAL_HINTS = re.compile(r"업체|기관|공단|은행|협회|공사|위원회|금융위|\(주\)|㈜|주식회사|외부")
-RELATION_RE = re.compile(r"요청|협의|보고|문의|통보|승인|협조")
 PROJECT_HINTS = re.compile(r"추진|예정|진행 중|진행중|검토 중|입찰|작성 중")
 SYSTEM_NAME_RE = re.compile(r"([A-Z][A-Za-z0-9]{1,15}(?:\s[A-Z][A-Za-z0-9]+)?|[가-힣A-Za-z]+시스템|[가-힣A-Za-z]+콘솔)")
 AFFIRM_RE = re.compile(r"^\s*(네|예|응|넵|맞아|맞습니다|맞아요|맞음|ㅇㅇ|좋아|좋습니다|좋아요|확인|그래|오케이|ok|yes)", re.I)
 SKIP_RE = re.compile(r"(모르겠|몰라|건너|스킵|skip|패스|다음 질문|해당\s*없|^없(어요|습니다|음)?\s*$)", re.I)
 FINISH_RE = re.compile(r"(문서|인수인계서)\s*(를|을)?\s*(생성|작성|만들)|그만|종료|끝내|마무리")
 NEGATIVE_RE = re.compile(r"^\s*(아니(?:요|오|에요)?|아뇨|틀렸(?:어요|습니다)?|틀려요?|수정(?:해\s*주세요|할게요)?)")
-
-
-def infer_scope(party: str, context: str = "") -> str:
-    """부서·기관 이름과 문맥으로 내부/외부를 추정한다(교차 확인 단계에서 인계자가 바로잡는다)."""
-    if "외부" in context:
-        return "외부"
-    if "내부" in context:
-        return "내부"
-    return "외부" if EXTERNAL_HINTS.search(party) else "내부"
-
-
-def infer_relation(text: str) -> str:
-    match = RELATION_RE.search(text or "")
-    return "협의" if not match or match.group(0) == "협조" else match.group(0)
 
 
 def _norm(text: str) -> str:
@@ -139,13 +139,17 @@ class OfflineEngine:
             for ev in usable:
                 for title, fields in self._sentence_candidates(spec, ev, profile):
                     self._add(slot, title, fields, ev)
+        if spec.key in PARTY_SLOTS:
+            consolidate_parties(slot["items"])
+            del slot["items"][8:]
         items = slot["items"]
         slot["coverage"] = evaluate_coverage(spec, items)
         slot["summary"] = self._slot_summary(spec, items)
         return SlotResult(slot=slot, gaps=self._gaps(spec, items, slot["coverage"]))
 
     def _add(self, slot: SlotState, title: str, fields: dict[str, str], ev: Evidence) -> None:
-        if len(slot["items"]) >= 8 and not any(_norm(i.get("title", "")) == _norm(title) for i in slot["items"]):
+        limit = 40 if slot.get("key") in PARTY_SLOTS else 8  # 협의 상대는 같은 상대끼리 합친 뒤 개수를 자른다
+        if len(slot["items"]) >= limit and not any(_norm(i.get("title", "")) == _norm(title) for i in slot["items"]):
             return
         upsert_item(slot, item_id="", title=title, fields=fields, citations=[ev.to_citation(title)], origin="document", defer=True)
 
@@ -157,7 +161,8 @@ class OfflineEngine:
                 header = [c.strip() for c in lines[i].strip("|").split("|")]
                 mapping = self._map_header(spec.key, header)
                 j = i + 2
-                usable = spec.title_field in mapping.values() and bool(set(mapping.values()) & COMPANION_FIELDS[spec.key])
+                titled = spec.title_field in mapping.values() or (spec.key in ("stakeholders", "leave_contacts") and "_person" in mapping.values())
+                usable = titled and bool(set(mapping.values()) & COMPANION_FIELDS[spec.key])
                 while j < len(lines) and lines[j].startswith("|"):
                     if usable:
                         cells = [c.strip() for c in lines[j].strip("|").split("|")]
@@ -167,6 +172,12 @@ class OfflineEngine:
                             timing = fields.get("timing", "")
                             if cycle and cycle not in timing:
                                 fields["timing"] = f"{cycle} {timing}".strip()
+                        if spec.key in ("stakeholders", "leave_contacts"):
+                            person = fields.pop("_person", "")
+                            if person and not fields.get("party"):
+                                fields["party"] = person  # '담당자' 열만 있으면 그 열이 곧 담당자(팀 또는 개인)
+                            elif person and person not in fields["party"]:
+                                fields["party"] = f"{fields['party']} {person}"
                         title = fields.get(spec.title_field, "")
                         if title:
                             yield title, fields
@@ -210,7 +221,8 @@ class OfflineEngine:
 
     def _sentence_to_items(self, spec: SlotSpec, sentence: str, ev: Evidence, profile: dict[str, Any]):
         key = spec.key
-        if key == "regular":
+        if key in ("regular", "leave_tasks"):
+            when_key, how_key = ("timing", "procedure") if key == "regular" else ("schedule", "method")
             cycle = infer_cycle(sentence)
             if not cycle or not re.search(r"매일|매주|매월|매년|분기|정기|영업일|월간|주간|연간", sentence):
                 return
@@ -220,7 +232,7 @@ class OfflineEngine:
             timing = timing.strip()
             if cycle not in timing:
                 timing = f"{cycle} {timing}".strip()
-            yield short_title(name, 40), {"name": short_title(name, 60), "timing": timing, "procedure": name.strip()}
+            yield short_title(name, 40), {"name": short_title(name, 60), when_key: timing, how_key: name.strip()}
         elif key == "stakeholders":
             if not re.search(r"협의|협업|요청|연락|문의|관리|보고", sentence):
                 return
@@ -232,18 +244,9 @@ class OfflineEngine:
                     continue
                 clause = next((c for c in clauses if party in c), sentence)
                 person = extract_person(clause) or (sender if sender and sender in clause else "")
-                contact = extract_contacts(clause)
-                if sender and person.startswith(sender):
-                    contact = contact or extract_contacts(str(ev.metadata.get("sender", "")))
+                name = f"{party} {person}".strip()  # 협의 상대: 팀 또는 개인
                 detail = re.sub(rf"^.*?{re.escape(party)}(\([^)]*\))?(과는|와는|과|와|에)?\s*", "", clause).strip(" ,.") or clause
-                yield party, {
-                    "party": party,
-                    "scope": infer_scope(party),
-                    "relation": infer_relation(clause),
-                    "person": person,
-                    "detail": short_title(detail, 80),
-                    "contact": contact,
-                }
+                yield name, {"party": name, "discussed": short_title(detail, 80)}
         elif key == "dept_notes":
             if DEPT_HINTS.search(sentence):
                 hint = DEPT_HINTS.search(sentence).group(0)
@@ -255,9 +258,9 @@ class OfflineEngine:
             match = SYSTEM_NAME_RE.search(sentence)
             if match and re.search(r"권한|계정|콘솔|접속|로그인", sentence):
                 yield match.group(1), {"name": match.group(1), "purpose": sentence}
-        elif key == "overview":
+        elif key in ("overview", "leave_units"):
             if re.search(r"담당한다|담당하며|수행한다|담당 업무", sentence) and re.search(r"업무|관리|운영", sentence):
-                yield short_title(sentence, 30), {"name": short_title(sentence, 40), "summary": sentence}
+                yield short_title(sentence, 30), {"name": short_title(sentence, 40), "note": sentence}
 
     def _slot_summary(self, spec: SlotSpec, items: list[SlotItem]) -> str:
         if not items:
@@ -267,7 +270,7 @@ class OfflineEngine:
         return f"{names}{more}"
 
     def _gaps(self, spec: SlotSpec, items: list[SlotItem], coverage: str) -> list[Gap]:
-        priority = 1 if spec.key in ("stakeholders", "systems") else 2
+        priority = 1 if spec.key in ("stakeholders", "leave_contacts", "systems") else 2
         if coverage == "missing":
             return [
                 {
@@ -277,6 +280,7 @@ class OfflineEngine:
                     "description": f"자료에서 {spec.title} 정보를 찾지 못함",
                     "question": spec.default_question,
                     "priority": priority,
+                    "weight": len(spec.required) * spec.min_items,  # 이 질문이 채워 줄 부족한 필수 항목 수
                     "ask_for_document": spec.key in ("systems", "stakeholders"),
                     "status": "open",
                 }
@@ -296,6 +300,7 @@ class OfflineEngine:
                     "description": f"'{label}'의 {names} 정보 없음",
                     "question": f"자료에 있는 '{label}' 관련해서 {josa(names, '을/를')} 알려 주시겠어요?",
                     "priority": priority,
+                    "weight": len(missing),
                     "ask_for_document": False,
                     "status": "open",
                 }
@@ -334,7 +339,7 @@ class OfflineEngine:
         correcting = bool(data.pending) and bool(NEGATIVE_RE.match(text))
         if correcting:
             text = NEGATIVE_RE.sub("", text).lstrip(" ,.").strip() or text
-        slot_key = gap.get("slot") if gap else self._guess_slot(text)
+        slot_key = gap.get("slot") if gap else self._guess_slot(text, data.profile)
         spec = SLOT_BY_KEY[slot_key]
         slot = data.slots.get(slot_key) or {"key": slot_key, "items": []}
         target = None
@@ -361,22 +366,19 @@ class OfflineEngine:
         return Interpretation("correct" if correcting else "answer", updates=[update], resolved_gap_ids=[gap["id"]] if gap else [], reply=reply)
 
     def _correction_fields(self, spec: SlotSpec, text: str, keys: list[str]) -> dict[str, str]:
-        """정정 답변은 직전에 기록한 필드를 덮어쓴다(연락처·담당자는 해당 패턴만 추출)."""
+        """정정 답변은 직전에 기록한 필드를 덮어쓴다."""
         fields: dict[str, str] = {}
         for key in keys:
-            if key == "contact":
-                fields[key] = extract_contacts(text) or text
-            elif key == "person":
-                fields[key] = extract_person(text) or text
-            elif key != spec.title_field:
+            if key != spec.title_field:
                 fields[key] = text
         if not fields and keys:
             fields[keys[0]] = text
         return fields
 
-    def _guess_slot(self, text: str) -> str:
-        best, best_hits = "overview", 0
-        for spec in SLOTS:
+    def _guess_slot(self, text: str, profile: dict[str, Any] | None = None) -> str:
+        active = slots_for(profile)
+        best, best_hits = active[0].key, 0
+        for spec in active:
             hits = sum(1 for kw in spec.keywords if kw in text)
             if hits > best_hits:
                 best, best_hits = spec.key, hits
@@ -386,24 +388,10 @@ class OfflineEngine:
         missing = missing_fields(spec, target) if target else [f.key for f in spec.fields]
         fields: dict[str, str] = {}
         remaining = text
-        if "contact" in missing:
-            contact = extract_contacts(text)
-            if contact:
-                fields["contact"] = contact
-        if "person" in missing:
-            person = extract_person(text)
-            if person:
-                fields["person"] = person
         if "party" in missing:
             parties = extract_parties(text)
             if parties:
                 fields["party"] = parties[0]
-        if spec.key == "stakeholders":
-            party = fields.get("party") or (target or {}).get("fields", {}).get("party", "") or (target or {}).get("title", "")
-            if "scope" in missing and party:
-                fields["scope"] = infer_scope(party, text)
-            if "relation" in missing and party:
-                fields["relation"] = infer_relation(text)
         if "timing" in missing and spec.key == "regular":
             cycle = infer_cycle(text)
             if cycle:
@@ -420,29 +408,8 @@ class OfflineEngine:
         return fields
 
     def plan_questions(self, profile, gaps) -> tuple[list[str], set[str]]:
-        """규칙 엔진은 장별 우선순위를 그대로 쓴다."""
+        """순서는 collect_gaps 의 후처리(questions.rank_by_value)가 정한다. 규칙 엔진은 그대로 둔다."""
         return [g["id"] for g in gaps], set()
-
-    # ------------------------------------------------------------------ STAGE 4
-    def compose_extras(self, profile, slots) -> dict[str, Any]:
-        name = profile.get("name") or "인계자"
-        org = profile.get("organization") or ""
-        duties = profile.get("duties") or "담당 업무"
-        counts = {k: len(s.get("items", [])) for k, s in slots.items()}
-        subject = name + (f" {profile['position']}" if profile.get("position") else "")
-        overview = (
-            f"{josa(subject, '은/는')} {org + '에서 ' if org else ''}"
-            f"{josa(duties, '을/를')} 담당해 왔습니다. 정기 업무 {counts.get('regular', 0)}건, 비정기 업무 {counts.get('irregular', 0)}건, "
-            f"이해관계자 {counts.get('stakeholders', 0)}곳과의 관계를 인계합니다."
-        )
-        key_points: list[str] = []
-        for key in ("irregular", "regular"):
-            spec = SLOT_BY_KEY[key]
-            for item in slots.get(key, {}).get("items", [])[:2]:
-                f = item.get("fields", {})
-                when = f.get("schedule") or f.get("timing") or ""
-                key_points.append(f"{item_label(spec, item)}" + (f" ({when})" if when else ""))
-        return {"overview": overview, "key_points": key_points[:5]}
 
 
 def coverage_line(spec: SlotSpec, slot: SlotState) -> str:

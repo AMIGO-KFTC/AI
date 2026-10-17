@@ -1,0 +1,43 @@
+{
+  "engine": "claude",
+  "questions": {
+    "기본 자료": {
+      "gaps_found": 8,
+      "questions_asked": 8,
+      "missing_required_total": 10,
+      "covered_by_asked": 1.0,
+      "fill_at_5": 0.2,
+      "fill_auc_8": 0.338,
+      "info_per_question": 1.25
+    },
+    "자료 적음": {
+      "gaps_found": 9,
+      "questions_asked": 9,
+      "missing_required_total": 20,
+      "covered_by_asked": 1.0,
+      "fill_at_5": 0.35,
+      "fill_auc_8": 0.381,
+      "info_per_question": 2.22
+    },
+    "자료 많고 빈칸 많음": {
+      "gaps_found": 10,
+      "questions_asked": 10,
+      "missing_required_total": 23,
+      "covered_by_asked": 1.0,
+      "fill_at_5": 0.304,
+      "fill_auc_8": 0.386,
+      "info_per_question": 2.3
+    },
+    "평균": {
+      "questions_asked": 9.0,
+      "covered_by_asked": 1.0,
+      "fill_at_5": 0.285,
+      "fill_auc_8": 0.368,
+      "info_per_question": 1.923
+    }
+  },
+  "claude_cost": {
+    "usd": 0.0,
+    "requests": 29
+  }
+}

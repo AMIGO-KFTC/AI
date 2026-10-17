@@ -1,0 +1,74 @@
+{
+ "engine": "claude",
+ "repeat": 3,
+ "mean": {
+  "gaps": 8.333,
+  "fill_at_3": 0.277,
+  "fill_at_5": 1.0,
+  "fill_auc_8": 0.63,
+  "info_per_question": 0.993
+ },
+ "spread(max-min)": {
+  "fill_at_3": 0.402,
+  "fill_at_5": 0.0,
+  "fill_auc_8": 0.139
+ },
+ "runs": [
+  {
+   "gaps": 8,
+   "missing_required_total": 7,
+   "fill_at_3": 0.143,
+   "fill_at_5": 1.0,
+   "fill_auc_8": 0.643,
+   "info_per_question": 0.88,
+   "order": [
+    "overview(0)",
+    "overview(0)",
+    "regular(1)",
+    "regular(6)",
+    "stakeholders(0)",
+    "systems(0)",
+    "systems(0)",
+    "stakeholders(0)"
+   ]
+  },
+  {
+   "gaps": 9,
+   "missing_required_total": 11,
+   "fill_at_3": 0.545,
+   "fill_at_5": 1.0,
+   "fill_auc_8": 0.693,
+   "info_per_question": 1.22,
+   "order": [
+    "overview(0)",
+    "overview(0)",
+    "regular(6)",
+    "irregular(5)",
+    "irregular(0)",
+    "stakeholders(0)",
+    "stakeholders(0)",
+    "systems(0)",
+    "systems(0)"
+   ]
+  },
+  {
+   "gaps": 8,
+   "missing_required_total": 7,
+   "fill_at_3": 0.143,
+   "fill_at_5": 1.0,
+   "fill_auc_8": 0.554,
+   "info_per_question": 0.88,
+   "order": [
+    "overview(0)",
+    "overview(0)",
+    "regular(1)",
+    "regular(1)",
+    "irregular(5)",
+    "stakeholders(0)",
+    "systems(0)",
+    "systems(0)"
+   ]
+  }
+ ],
+ "claude_requests": 28
+}

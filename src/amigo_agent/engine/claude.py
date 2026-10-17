@@ -3,7 +3,7 @@
 STAGE 1 슬롯 분석 : 기본 검색 결과를 근거로 주고, 모자라면 모델이 search_documents 를 스스로 호출해 추가 탐색
 STAGE 2 요약      : 장별 분석 결과를 2~3문장 안내문으로
 STAGE 3 답변 해석 : 의도 분류 + 항목 갱신 + 교차 확인 메시지(필요하면 자료 재검색)
-STAGE 4 문서 합성 : 업무 개요와 핵심 당부사항(표·근거 번호는 render.py 가 결정적으로 생성)
+STAGE 4 문서 합성 : 모델을 쓰지 않는다(표·근거 번호를 포함한 문서 전체를 render.py 가 결정적으로 생성)
 """
 
 from __future__ import annotations
@@ -19,12 +19,10 @@ from ..kb import Evidence, EvidenceRegistry, KBAdapter
 from ..llm import SEARCH_TOOL, ClaudeLLM, LLMOutputError
 from ..prompts import (
     ANALYSIS_SYSTEM,
-    COMPOSE_SYSTEM,
     INTERPRET_SYSTEM,
     PLAN_SYSTEM,
     SUMMARY_SYSTEM,
     analysis_user,
-    compose_user,
     interpret_user,
     plan_user,
     summary_user,
@@ -110,12 +108,6 @@ class PlanOutput(BaseModel):
 class SummaryOutput(BaseModel):
     model_config = _STRICT
     message: str
-
-
-class ComposeOutput(BaseModel):
-    model_config = _STRICT
-    overview: str
-    key_points: list[str]
 
 
 def _no_relevant_message(query: str, results: list[Evidence]) -> str:
@@ -276,17 +268,6 @@ class ClaudeEngine:
                 }
             )
         return Interpretation(intent=output.intent, updates=updates, resolved_gap_ids=list(output.resolved_gap_ids), reply=output.reply.strip())
-
-    # ------------------------------------------------------------------ STAGE 4
-    def compose_extras(self, profile, slots) -> dict[str, Any]:
-        output = self.llm.structured(
-            system=COMPOSE_SYSTEM,
-            user=compose_user(profile, slots),
-            output_model=ComposeOutput,
-            effort=self.config.effort_compose,
-            max_tokens=8000,
-        )
-        return {"overview": output.overview.strip(), "key_points": [p.strip() for p in output.key_points if p.strip()][:6]}
 
 
 def _pending_text(data: InterpretInput) -> str:

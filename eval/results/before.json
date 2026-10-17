@@ -1,0 +1,390 @@
+{
+  "periods": {
+    "cases": 59,
+    "accuracy": 0.695,
+    "readable_accuracy": 0.64,
+    "missed": 16,
+    "wrong": 2,
+    "invented": 0,
+    "invented_rate": 0.0,
+    "failures": [
+      {
+        "text": "3~5월",
+        "gold": [
+          3,
+          4,
+          5
+        ],
+        "got": [
+          5
+        ]
+      },
+      {
+        "text": "상반기",
+        "gold": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "got": []
+      },
+      {
+        "text": "하반기",
+        "gold": [
+          7,
+          8,
+          9,
+          10,
+          11,
+          12
+        ],
+        "got": []
+      },
+      {
+        "text": "2026년 하반기",
+        "gold": [
+          7,
+          8,
+          9,
+          10,
+          11,
+          12
+        ],
+        "got": []
+      },
+      {
+        "text": "1분기",
+        "gold": [
+          1,
+          2,
+          3
+        ],
+        "got": []
+      },
+      {
+        "text": "2분기",
+        "gold": [
+          4,
+          5,
+          6
+        ],
+        "got": []
+      },
+      {
+        "text": "3분기",
+        "gold": [
+          7,
+          8,
+          9
+        ],
+        "got": []
+      },
+      {
+        "text": "4분기",
+        "gold": [
+          10,
+          11,
+          12
+        ],
+        "got": []
+      },
+      {
+        "text": "2026년 3분기",
+        "gold": [
+          7,
+          8,
+          9
+        ],
+        "got": [
+          3
+        ]
+      },
+      {
+        "text": "1~2분기",
+        "gold": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "got": []
+      },
+      {
+        "text": "3분기~4분기",
+        "gold": [
+          7,
+          8,
+          9,
+          10,
+          11,
+          12
+        ],
+        "got": []
+      },
+      {
+        "text": "Q1~Q2",
+        "gold": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "got": []
+      },
+      {
+        "text": "3Q",
+        "gold": [
+          7,
+          8,
+          9
+        ],
+        "got": []
+      },
+      {
+        "text": "매 분기",
+        "gold": [
+          3,
+          6,
+          9,
+          12
+        ],
+        "got": []
+      },
+      {
+        "text": "분기별",
+        "gold": [
+          3,
+          6,
+          9,
+          12
+        ],
+        "got": []
+      },
+      {
+        "text": "연초",
+        "gold": [
+          1
+        ],
+        "got": []
+      },
+      {
+        "text": "연말",
+        "gold": [
+          12
+        ],
+        "got": []
+      },
+      {
+        "text": "연말연시",
+        "gold": [
+          1,
+          12
+        ],
+        "got": []
+      }
+    ]
+  },
+  "periods_holdout": {
+    "cases": 25,
+    "accuracy": 0.56,
+    "readable_accuracy": 0.476,
+    "missed": 9,
+    "wrong": 2,
+    "invented": 0,
+    "invented_rate": 0.0,
+    "failures": [
+      {
+        "text": "2026년 상반기 중",
+        "gold": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "got": []
+      },
+      {
+        "text": "내년 상반기",
+        "gold": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "got": []
+      },
+      {
+        "text": "하반기 중 시행",
+        "gold": [
+          7,
+          8,
+          9,
+          10,
+          11,
+          12
+        ],
+        "got": []
+      },
+      {
+        "text": "4분기 중",
+        "gold": [
+          10,
+          11,
+          12
+        ],
+        "got": []
+      },
+      {
+        "text": "1분기~2분기",
+        "gold": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "got": []
+      },
+      {
+        "text": "Q3",
+        "gold": [
+          7,
+          8,
+          9
+        ],
+        "got": []
+      },
+      {
+        "text": "5~8월",
+        "gold": [
+          5,
+          6,
+          7,
+          8
+        ],
+        "got": [
+          8
+        ]
+      },
+      {
+        "text": "매 분기 말",
+        "gold": [
+          3,
+          6,
+          9,
+          12
+        ],
+        "got": []
+      },
+      {
+        "text": "분기마다",
+        "gold": [
+          3,
+          6,
+          9,
+          12
+        ],
+        "got": []
+      },
+      {
+        "text": "연말까지",
+        "gold": [
+          12
+        ],
+        "got": []
+      },
+      {
+        "text": "연초~3월",
+        "gold": [
+          1,
+          2,
+          3
+        ],
+        "got": [
+          3
+        ]
+      }
+    ]
+  },
+  "parties": {
+    "variants": 24,
+    "ideal_items": 7,
+    "avg_items": 9.8,
+    "recall": 0.633,
+    "precision": 1.0,
+    "f1": 0.775,
+    "wrong_merges": 0,
+    "dropped_variants": 0,
+    "sample_titles": [
+      "IT지원팀 최영호 과장",
+      "인사팀",
+      "재무팀 김하나 대리",
+      "재무팀 박지훈 차장"
+    ]
+  },
+  "parties_holdout": {
+    "variants": 20,
+    "ideal_items": 8,
+    "avg_items": 11.2,
+    "recall": 0.697,
+    "precision": 1.0,
+    "f1": 0.822,
+    "wrong_merges": 0,
+    "dropped_variants": 0,
+    "sample_titles": [
+      "(주)유니온 서윤아 PM",
+      "㈜유니온",
+      "감사실",
+      "법무팀 박서준 사원",
+      "법무팀 이수진 과장"
+    ]
+  },
+  "questions": {
+    "기본 자료": {
+      "gaps_found": 6,
+      "questions_asked": 6,
+      "missing_required_total": 12,
+      "covered_by_asked": 1.0,
+      "fill_at_5": 0.833,
+      "fill_auc_8": 0.646,
+      "info_per_question": 2.0
+    },
+    "자료 적음": {
+      "gaps_found": 5,
+      "questions_asked": 5,
+      "missing_required_total": 19,
+      "covered_by_asked": 1.0,
+      "fill_at_5": 1.0,
+      "fill_auc_8": 0.75,
+      "info_per_question": 3.8
+    },
+    "자료 많고 빈칸 많음": {
+      "gaps_found": 9,
+      "questions_asked": 9,
+      "missing_required_total": 20,
+      "covered_by_asked": 1.0,
+      "fill_at_5": 0.4,
+      "fill_auc_8": 0.394,
+      "info_per_question": 2.22
+    },
+    "평균": {
+      "questions_asked": 6.667,
+      "covered_by_asked": 1.0,
+      "fill_at_5": 0.744,
+      "fill_auc_8": 0.597,
+      "info_per_question": 2.673
+    }
+  }
+}

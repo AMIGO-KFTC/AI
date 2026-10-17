@@ -26,6 +26,8 @@ from .config import AgentConfig
 from .engine import Engine, Interpretation, InterpretInput, SlotResult
 from .engine.offline import OfflineEngine
 from .kb import KBAdapter
+from .parties import consolidate_parties, remap_ids
+from .questions import rank_by_value
 from .llm import LLMError, LLMOutputError
 from .precedence import RANK_USER, now_ts
 from .render import render_document
@@ -153,6 +155,7 @@ def collect_gaps(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str,
     for g in planned:
         if g["id"] in ranks:
             g["rank"] = ranks[g["id"]]
+    rank_by_value(planned, state.get("slots") or {})  # 엔진이 정한 순서 위에 정보량 기준 후처리(Claude 도 같은 순서가 되게)
     _progress("자료 분석을 마쳤어요.", current=len(active), total=len(active))
     return {"gaps": open_gaps(planned)}
 
@@ -165,12 +168,39 @@ def resolve_conflicts(state: AgentState, runtime: Runtime[AgentContext]) -> dict
     `conflicts` 에 남는다(최종 문서에는 적용한 값만 쓴다). 같은 함수를 세 지점에 노드로 등록해 쓴다.
     """
     slots = copy.deepcopy(state.get("slots") or {})
-    changed = resolve_slots(slots)
+    gaps = copy.deepcopy(state.get("gaps") or [])
+    merged = merge_same_parties(slots, gaps)  # '재무팀 박지훈 차장' 과 '박지훈 차장님' 처럼 같은 협의 상대는 한 항목으로
+    changed = list(dict.fromkeys(resolve_slots(slots) + merged))
     if not changed:
         return {}
     for key in changed:
         _emit({"type": "slot", "key": key, "slot": {k: v for k, v in slots[key].items() if k != "proposed_gaps"}})
-    return {"slots": {key: slots[key] for key in changed}}
+    update: dict[str, Any] = {"slots": {key: slots[key] for key in changed}}
+    if merged and gaps:
+        update["gaps"] = gaps
+    return update
+
+
+PARTY_SLOTS = ("stakeholders", "leave_contacts")
+
+
+def merge_same_parties(slots: dict[str, Any], gaps: list[Any]) -> list[str]:
+    """협의 상대 슬롯에서 같은 상대로 읽히는 항목을 합치고, 합쳐진 항목을 가리키던 질문의 연결을 바꾼다. 바뀐 슬롯 키를 돌려준다."""
+    changed = []
+    for key in PARTY_SLOTS:
+        items = (slots.get(key) or {}).get("items")
+        if not items or len(items) < 2:
+            continue
+        before = len(items)
+        remap = consolidate_parties(items)
+        if len(items) == before:
+            continue
+        remap_ids(gaps, remap)
+        remap_ids(slots[key].get("proposed_gaps"), remap)
+        spec = SLOT_BY_KEY[key]
+        slots[key]["coverage"] = evaluate_coverage(spec, items)
+        changed.append(key)
+    return changed
 
 
 # =========================================================================== STAGE 2
@@ -506,16 +536,11 @@ def compose(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]
     _stage("composing")
     _progress("인수인계서를 작성하고 있어요.", status="running")
     slots = state.get("slots") or {}
-    try:
-        extras = ctx.engine.compose_extras(state.get("profile", {}), slots)
-    except LLMOutputError:
-        extras = _offline(ctx).compose_extras(state.get("profile", {}), slots)
     version = int(state.get("document_version") or 0) + 1
     markdown = render_document(
         profile=state.get("profile", {}),
         slots=slots,
         gaps=state.get("gaps") or [],
-        extras=extras,
         sources=state.get("sources") or [],
         version=version,
     )

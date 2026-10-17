@@ -1,0 +1,23 @@
+{
+ "variants": 252,
+ "ideal_items": 47,
+ "avg_items": 104.3,
+ "recall": 0.46,
+ "precision": 1.0,
+ "f1": 0.63,
+ "wrong_merges": 0,
+ "dropped_variants": 0,
+ "sample_titles": [
+  "변하나 부장(보안팀)",
+  "변하나 부장님",
+  "보안팀 변하나",
+  "보안팀 빈현우 주임",
+  "빈현우 주임(보안팀)",
+  "설은지 대리(총무팀)",
+  "총무팀 설은지 대리"
+ ],
+ "engine": "offline",
+ "claude_cost": {
+  "requests": 0
+ }
+}

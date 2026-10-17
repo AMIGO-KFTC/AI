@@ -1,0 +1,19 @@
+{
+ "variants": 247,
+ "ideal_items": 47,
+ "avg_items": 47.0,
+ "recall": 1.0,
+ "precision": 1.0,
+ "f1": 1.0,
+ "wrong_merges": 0,
+ "dropped_variants": 0,
+ "sample_titles": [
+  "박현우 주임(보안팀)",
+  "신하나 부장(보안팀)",
+  "총무팀 송예린 대리"
+ ],
+ "engine": "offline",
+ "claude_cost": {
+  "requests": 0
+ }
+}

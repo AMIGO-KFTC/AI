@@ -1,0 +1,19 @@
+{
+ "variants": 247,
+ "ideal_items": 47,
+ "avg_items": 96.0,
+ "recall": 0.642,
+ "precision": 1.0,
+ "f1": 0.782,
+ "wrong_merges": 0,
+ "dropped_variants": 8,
+ "sample_titles": [
+  "보안팀 박현우 주임과의 협의",
+  "보안팀 신하나 부장과의 협의",
+  "총무팀 송예린 대리와의 협의"
+ ],
+ "engine": "claude",
+ "claude_cost": {
+  "requests": 201
+ }
+}
