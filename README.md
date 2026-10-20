@@ -477,6 +477,7 @@ graph TD
 - 월별 막대표와 칸을 나눈 카드는 문서 안에 HTML `<table>` 로 들어 있습니다(rowspan/colspan·막대 색이 필요해서). 사용자가 쓴 글은 모두 HTML 이스케이프하며, 화면(`rehype-sanitize`)과 Word/PDF 내보내기가 같은 모양으로 읽습니다.
 - 정기업무의 "주요 협업 및 협의사항"은 항목 안의 글(필드)로 받습니다.
 - 인계자 정보의 `task_name`(단위 업무명)은 문서 머리표와 검색어에 쓰입니다.
+- 인계자 정보의 `team_guidelines`(`{"items": [{"name", "instruction", "required"}], "notes"}`)는 팀 관리자가 정한 인수인계서 항목·작성 지침입니다. `prompts.team_guidelines_block` 이 장별 분석(`analysis_user`)과 질의응답(`interpret_user`) 프롬프트에 '우리 팀 인수인계서 지침' 구간으로 넣습니다. 비어 있으면 프롬프트가 달라지지 않고, 지침은 근거 자료를 대신하지 않습니다.
 
 충족 수준은 "규칙(필수 필드·최소 항목 수)"과 "LLM 판정" 중 **더 보수적인 쪽**을 택해, 근거 없이 '충분'으로 넘어가지 않게 했습니다.
 

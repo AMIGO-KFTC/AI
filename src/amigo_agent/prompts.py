@@ -80,6 +80,74 @@ def profile_block(profile: dict[str, Any]) -> str:
     return "\n".join(f"- {k}: {v}" for k, v in rows if v)
 
 
+# 팀 관리자가 정한 지침의 상한. BackEnd 가 저장할 때도 같은 한도로 검증하지만, 프롬프트가 부풀지 않도록 여기서도 자른다.
+MAX_TEAM_ITEMS = 30
+MAX_TEAM_ITEM_NAME = 100
+MAX_TEAM_ITEM_INSTRUCTION = 500
+MAX_TEAM_NOTES = 2000
+
+
+def clean_team_guidelines(guidelines: dict[str, Any] | None) -> dict[str, Any]:
+    """팀 지침(profile["team_guidelines"])을 정리한다: 이름이 없는 항목·빈 값을 버리고 길이를 자른다."""
+    if not isinstance(guidelines, dict):
+        return {"items": [], "notes": ""}
+    items: list[dict[str, Any]] = []
+    for raw in guidelines.get("items") or []:
+        if not isinstance(raw, dict):
+            continue
+        name = " ".join(str(raw.get("name") or "").split())[:MAX_TEAM_ITEM_NAME]
+        if not name:
+            continue
+        instruction = " ".join(str(raw.get("instruction") or "").split())[:MAX_TEAM_ITEM_INSTRUCTION]
+        items.append({"name": name, "instruction": instruction, "required": bool(raw.get("required"))})
+    notes = str(guidelines.get("notes") or "").strip()[:MAX_TEAM_NOTES]
+    return {"items": items[:MAX_TEAM_ITEMS], "notes": notes}
+
+
+def team_guidelines_block(guidelines: dict[str, Any] | None, *, slot_key: str = "") -> str:
+    """팀 관리자가 정한 '우리 팀 인수인계서 지침'을 프롬프트 한 구간으로 만든다. 지침이 비어 있으면 빈 문자열.
+
+    - slot_key 가 있으면 그 장을 분석하는 프롬프트용(해당하는 항목만 다루고, 부서별 추가 자료 장에서는 모든 항목을 다룬다).
+    - slot_key 가 없으면 인계자와 대화하는 프롬프트용(질문·정리할 때 참고).
+    지침은 '무엇을 찾아 담을지'를 정할 뿐 사실의 근거가 아니다. 근거·민감 정보 원칙은 지침으로 바뀌지 않음을 블록 안에서 밝힌다.
+    """
+    data = clean_team_guidelines(guidelines)
+    if not data["items"] and not data["notes"]:
+        return ""
+    lines = [
+        "## 우리 팀 인수인계서 지침 (팀 관리자가 정한 내용)",
+        "이 지침은 무엇을 찾아 담고 어떻게 쓸지 정하는 것입니다. 사실의 근거가 아니므로, 항목의 내용은 여전히 근거 자료와 인계자 답변에서만 가져옵니다. "
+        "근거 ID 를 붙이는 원칙과 시스템 ID·비밀번호 같은 민감 정보를 다루지 않는 원칙은 이 지침으로 바뀌지 않습니다.",
+    ]
+    if data["items"]:
+        lines.append("")
+        lines.append("### 우리 팀 인수인계서에 꼭 들어가야 하는 항목")
+        for item in data["items"]:
+            tag = "[필수] " if item["required"] else ""
+            hint = f" — {item['instruction']}" if item["instruction"] else ""
+            lines.append(f"- {tag}{item['name']}{hint}")
+        if slot_key == "dept_notes":
+            lines.append(
+                "이 장(부서별 추가 자료)에서는 위 항목을 모두 다룹니다. 항목 이름을 '추가 자료'로, 작성 안내에 맞춰 찾은 내용을 '관리 내용'으로 적습니다. "
+                "자료에서 찾은 내용은 근거 ID 와 함께 항목으로 만들고, 필수 항목인데 자료에 없으면 gaps 로 남깁니다(필수가 아닌 항목은 자료에 있을 때만 다룹니다)."
+            )
+        elif slot_key:
+            lines.append(
+                "이 장의 성격에 맞는 항목만 다룹니다. 이 장과 관련 없는 항목은 무시하세요(다른 장 분석에서 처리합니다). "
+                "해당하는 내용을 자료에서 찾으면 근거 ID 와 함께 이 장의 항목·필드에 넣고, 필수 항목인데 자료에 없으면 gaps 로 남깁니다."
+            )
+        else:
+            lines.append(
+                "인계자에게 질문하거나 답변을 정리할 때, 위 항목에 해당하는 내용이 나오면 놓치지 않고 정리합니다. "
+                "필수 항목이 아직 비어 있다면 적절한 때에 한 번에 하나씩 확인합니다."
+            )
+    if data["notes"]:
+        lines.append("")
+        lines.append("### 우리 팀의 특징·작성 지침")
+        lines.append(data["notes"])
+    return "\n".join(lines)
+
+
 def slot_spec_block(spec: SlotSpec) -> str:
     fields = "\n".join(f"- {f.key}({f.label}){': ' + f.hint if f.hint else ''}" for f in spec.fields)
     return (
@@ -89,9 +157,11 @@ def slot_spec_block(spec: SlotSpec) -> str:
 
 
 def analysis_user(spec: SlotSpec, profile: dict[str, Any], evidence_text: str, max_gaps: int) -> str:
+    team = team_guidelines_block(profile.get("team_guidelines"), slot_key=spec.key)
+    team_section = f"{team}\n\n" if team else ""
     evidence = evidence_text or "(검색된 근거가 없습니다. 필요하면 search_documents 로 직접 찾아보세요.)"
     return (
-        f"## 인계자 정보\n{profile_block(profile)}\n\n{slot_spec_block(spec)}\n\n"
+        f"## 인계자 정보\n{profile_block(profile)}\n\n{slot_spec_block(spec)}\n\n{team_section}"
         f"## 근거 자료(검색 결과)\n{evidence}\n\n"
         f"위 근거와 필요하면 추가 검색 결과를 바탕으로 '{spec.title}' 장을 작성하세요. gaps 는 최대 {max_gaps}개입니다."
     )
@@ -150,9 +220,11 @@ def interpret_user(
         )
     else:
         gap_text = "(현재 질문 없음)"
+    team = team_guidelines_block(profile.get("team_guidelines"))
+    team_section = f"{team}\n\n" if team else ""
     stage_note = "문서 초안을 검토하는 단계입니다. 인계자의 수정 요청을 항목에 반영하세요." if stage == "review" else "질의응답 단계입니다."
     return (
-        f"## 인계자 정보\n{profile_block(profile)}\n\n## 진행 단계\n{stage_note}\n\n"
+        f"## 인계자 정보\n{profile_block(profile)}\n\n{team_section}## 진행 단계\n{stage_note}\n\n"
         f"## 현재 질문\n{gap_text}\n\n## 확인 대기 중인 정리 내용\n{pending_text or '(없음)'}\n\n"
         f"## 현재까지 정리된 항목\n{items_block(slots)}\n\n## 남은 질문\n{gaps_block(open_gaps)}\n\n"
         f"## 최근 대화\n{transcript_block(transcript)}\n\n## 인계자의 새 메시지\n{message}"
