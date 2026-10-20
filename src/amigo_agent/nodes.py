@@ -28,7 +28,6 @@ from .engine.offline import OfflineEngine
 from .kb import KBAdapter
 from .parties import consolidate_parties, remap_ids
 from .questions import rank_by_value
-from .team_items import ensure_team_item_gaps
 from .llm import LLMError, LLMOutputError
 from .precedence import RANK_USER, now_ts
 from .render import render_document
@@ -157,10 +156,6 @@ def collect_gaps(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str,
         if g["id"] in ranks:
             g["rank"] = ranks[g["id"]]
     rank_by_value(planned, state.get("slots") or {})  # 엔진이 정한 순서 위에 정보량 기준 후처리(Claude 도 같은 순서가 되게)
-    # 팀 관리자가 필수로 정한 항목이 자료에서 확인되지 않았다면 질문을 직접 넣고 앞에 둔다(계획 단계의 중복 제거·상한에 지워지지 않게 계획 뒤에 한다)
-    planned = ensure_team_item_gaps(
-        state.get("profile"), state.get("slots") or {}, planned, slot_keys=[s.key for s in active], limit=runtime.context.config.max_questions
-    )
     _progress("자료 분석을 마쳤어요.", current=len(active), total=len(active))
     return {"gaps": open_gaps(planned)}
 
@@ -510,7 +505,6 @@ def reanalyze(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
         fresh = [g for g in results[key].gaps if g.get("question") not in seen]
         gaps = kept + fresh
 
-    gaps = ensure_team_item_gaps(state.get("profile"), slots, gaps, slot_keys=targets, limit=ctx.config.max_questions)  # 재분석이 지운 필수 팀 항목 질문을 되살린다
     for g in gaps:  # 답을 기다리던 질문은 새 분석 결과와 함께 다시 고른다
         if g.get("status") == "asked":
             g["status"] = "open"

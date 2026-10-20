@@ -55,7 +55,6 @@ class Gap(TypedDict, total=False):
     rank: int  # 질문 계획(Claude)이 정한 전체 순서. 없으면 priority·장 순서로 정렬
     ask_for_document: bool
     status: str  # open | asked | answered | resolved | skipped
-    team_item: str  # 팀 관리자가 필수로 정한 항목의 이름(team_items.ensure_team_item_gaps 가 붙인다). 이 질문은 계획 단계에서 지워지지 않고 앞에 온다
 
 
 class Turn(TypedDict, total=False):

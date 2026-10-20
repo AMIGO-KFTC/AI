@@ -99,7 +99,7 @@ def clean_team_guidelines(guidelines: dict[str, Any] | None) -> dict[str, Any]:
         if not name:
             continue
         instruction = " ".join(str(raw.get("instruction") or "").split())[:MAX_TEAM_ITEM_INSTRUCTION]
-        items.append({"name": name, "instruction": instruction, "required": bool(raw.get("required"))})
+        items.append({"name": name, "instruction": instruction})
     notes = str(guidelines.get("notes") or "").strip()[:MAX_TEAM_NOTES]
     return {"items": items[:MAX_TEAM_ITEMS], "notes": notes}
 
@@ -107,8 +107,9 @@ def clean_team_guidelines(guidelines: dict[str, Any] | None) -> dict[str, Any]:
 def team_guidelines_block(guidelines: dict[str, Any] | None, *, slot_key: str = "") -> str:
     """팀 관리자가 정한 '우리 팀 인수인계서 지침'을 프롬프트 한 구간으로 만든다. 지침이 비어 있으면 빈 문자열.
 
-    - slot_key 가 있으면 그 장을 분석하는 프롬프트용(해당하는 항목만 다루고, 부서별 추가 자료 장에서는 모든 항목을 다룬다).
-    - slot_key 가 없으면 인계자와 대화하는 프롬프트용(질문·정리할 때 참고).
+    - slot_key 가 있으면 그 장을 분석하는 프롬프트용(해당하는 항목만 다루고, 부서별 추가 자료 장에서는 모든 항목을 살핀다).
+    - slot_key 가 없으면 인계자와 대화하는 프롬프트용(답변을 정리할 때 참고).
+    항목은 '자료에 있으면 이 이름으로 빠짐없이 정리하라'는 안내일 뿐이다. 자료에 없으면 비워 두고 그것 때문에 질문을 만들지 않는다.
     지침은 '무엇을 찾아 담을지'를 정할 뿐 사실의 근거가 아니다. 근거·민감 정보 원칙은 지침으로 바뀌지 않음을 블록 안에서 밝힌다.
     """
     data = clean_team_guidelines(guidelines)
@@ -121,26 +122,24 @@ def team_guidelines_block(guidelines: dict[str, Any] | None, *, slot_key: str = 
     ]
     if data["items"]:
         lines.append("")
-        lines.append("### 우리 팀 인수인계서에 꼭 들어가야 하는 항목")
+        lines.append("### 우리 팀 인수인계서에 담는 항목")
         for item in data["items"]:
-            tag = "[필수] " if item["required"] else ""
             hint = f" — {item['instruction']}" if item["instruction"] else ""
-            lines.append(f"- {tag}{item['name']}{hint}")
+            lines.append(f"- {item['name']}{hint}")
         if slot_key == "dept_notes":
             lines.append(
-                "이 장(부서별 추가 자료)에서는 위 항목을 모두 다룹니다. 항목 이름을 '추가 자료'로, 작성 안내에 맞춰 찾은 내용을 '관리 내용'으로 적습니다. "
-                "자료에서 찾은 내용은 근거 ID 와 함께 항목으로 만들고, 필수 항목인데 자료에 없으면 gaps 로 남깁니다(필수가 아닌 항목은 자료에 있을 때만 다룹니다)."
+                "이 장(부서별 추가 자료)에서는 위 항목을 살핍니다. 자료에서 찾은 항목만 항목 이름을 '추가 자료'로, 작성 안내에 맞춰 찾은 내용을 '관리 내용'으로 적고 근거 ID 를 붙입니다. "
+                "자료에 없는 항목은 만들지 않고, 그 항목만을 위한 질문(gaps)도 만들지 않습니다."
             )
         elif slot_key:
             lines.append(
                 "이 장의 성격에 맞는 항목만 다룹니다. 이 장과 관련 없는 항목은 무시하세요(다른 장 분석에서 처리합니다). "
-                "해당하는 내용을 자료에서 찾으면 근거 ID 와 함께 이 장의 항목·필드에 넣고, 필수 항목인데 자료에 없으면 gaps 로 남깁니다."
+                "해당하는 내용을 자료에서 찾으면 근거 ID 와 함께 이 장의 항목·필드에 넣습니다. 자료에 없으면 그대로 두고, 그 항목만을 위한 질문(gaps)은 만들지 않습니다."
             )
         else:
             lines.append(
-                "인계자에게 질문하거나 답변을 정리할 때, 위 항목에 해당하는 내용이 나오면 놓치지 않고 정리합니다. "
-                "어느 장에도 맞지 않는 항목은 부서별 추가 자료(dept_notes) 장의 '추가 자료'(topic)를 위 항목 이름 그대로 적어 기록합니다. "
-                "인계자가 '없음'이라고 답한 항목은 '없음'으로 기록합니다. 필수 항목이 아직 비어 있다면 적절한 때에 한 번에 하나씩 확인합니다."
+                "인계자가 말한 내용이 위 항목에 해당하면 놓치지 않고 그 항목에 맞춰 정리합니다. "
+                "위 항목이 비어 있다는 이유만으로 새 질문을 하지는 않습니다."
             )
     if data["notes"]:
         lines.append("")
