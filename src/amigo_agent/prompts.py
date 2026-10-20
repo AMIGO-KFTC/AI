@@ -139,7 +139,8 @@ def team_guidelines_block(guidelines: dict[str, Any] | None, *, slot_key: str = 
         else:
             lines.append(
                 "인계자에게 질문하거나 답변을 정리할 때, 위 항목에 해당하는 내용이 나오면 놓치지 않고 정리합니다. "
-                "필수 항목이 아직 비어 있다면 적절한 때에 한 번에 하나씩 확인합니다."
+                "어느 장에도 맞지 않는 항목은 부서별 추가 자료(dept_notes) 장의 '추가 자료'(topic)를 위 항목 이름 그대로 적어 기록합니다. "
+                "인계자가 '없음'이라고 답한 항목은 '없음'으로 기록합니다. 필수 항목이 아직 비어 있다면 적절한 때에 한 번에 하나씩 확인합니다."
             )
     if data["notes"]:
         lines.append("")
