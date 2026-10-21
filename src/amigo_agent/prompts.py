@@ -85,12 +85,13 @@ MAX_TEAM_ITEMS = 30
 MAX_TEAM_ITEM_NAME = 100
 MAX_TEAM_ITEM_INSTRUCTION = 500
 MAX_TEAM_NOTES = 2000
+MAX_TEAM_PROMPT = 2000  # 팀 전용 프롬프트(AI 가 항상 따라야 하는 역할과 판단 기준)
 
 
 def clean_team_guidelines(guidelines: dict[str, Any] | None) -> dict[str, Any]:
     """팀 지침(profile["team_guidelines"])을 정리한다: 이름이 없는 항목·빈 값을 버리고 길이를 자른다."""
     if not isinstance(guidelines, dict):
-        return {"items": [], "notes": ""}
+        return {"items": [], "notes": "", "prompt": ""}
     items: list[dict[str, Any]] = []
     for raw in guidelines.get("items") or []:
         if not isinstance(raw, dict):
@@ -101,7 +102,8 @@ def clean_team_guidelines(guidelines: dict[str, Any] | None) -> dict[str, Any]:
         instruction = " ".join(str(raw.get("instruction") or "").split())[:MAX_TEAM_ITEM_INSTRUCTION]
         items.append({"name": name, "instruction": instruction})
     notes = str(guidelines.get("notes") or "").strip()[:MAX_TEAM_NOTES]
-    return {"items": items[:MAX_TEAM_ITEMS], "notes": notes}
+    prompt = str(guidelines.get("prompt") or "").strip()[:MAX_TEAM_PROMPT]
+    return {"items": items[:MAX_TEAM_ITEMS], "notes": notes, "prompt": prompt}
 
 
 def team_guidelines_block(guidelines: dict[str, Any] | None, *, slot_key: str = "") -> str:
@@ -113,13 +115,17 @@ def team_guidelines_block(guidelines: dict[str, Any] | None, *, slot_key: str = 
     지침은 '무엇을 찾아 담을지'를 정할 뿐 사실의 근거가 아니다. 근거·민감 정보 원칙은 지침으로 바뀌지 않음을 블록 안에서 밝힌다.
     """
     data = clean_team_guidelines(guidelines)
-    if not data["items"] and not data["notes"]:
+    if not data["items"] and not data["notes"] and not data["prompt"]:
         return ""
     lines = [
         "## 우리 팀 인수인계서 지침 (팀 관리자가 정한 내용)",
         "이 지침은 무엇을 찾아 담고 어떻게 쓸지 정하는 것입니다. 사실의 근거가 아니므로, 항목의 내용은 여전히 근거 자료와 인계자 답변에서만 가져옵니다. "
         "근거 ID 를 붙이는 원칙과 시스템 ID·비밀번호 같은 민감 정보를 다루지 않는 원칙은 이 지침으로 바뀌지 않습니다.",
     ]
+    if data["prompt"]:
+        lines.append("")
+        lines.append("### 팀 전용 프롬프트 (팀 관리자가 정한 역할과 판단 기준)")
+        lines.append(data["prompt"])
     if data["items"]:
         lines.append("")
         lines.append("### 우리 팀 인수인계서에 담는 항목")
