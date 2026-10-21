@@ -29,6 +29,7 @@ def build_graph() -> StateGraph:
 
     graph.add_node("prepare", nodes.prepare)
     graph.add_node("analyze_slot", nodes.analyze_slot)
+    graph.add_node("analyze_children", nodes.analyze_children)  # STAGE 1: 다른 장에 붙는 장은 붙는 장의 이름이 나온 뒤에 분석
     graph.add_node("resolve_conflicts", nodes.resolve_conflicts)  # STAGE 1: 분석 결과의 정보 충돌 확정
     graph.add_node("collect_gaps", nodes.collect_gaps)
     graph.add_node("summarize", nodes.summarize)
@@ -46,7 +47,8 @@ def build_graph() -> StateGraph:
     # STAGE 1 → 2
     graph.add_edge(START, "prepare")
     graph.add_conditional_edges("prepare", nodes.fan_out, ["analyze_slot"])
-    graph.add_edge("analyze_slot", "resolve_conflicts")
+    graph.add_edge("analyze_slot", "analyze_children")
+    graph.add_edge("analyze_children", "resolve_conflicts")
     graph.add_edge("resolve_conflicts", "collect_gaps")
     graph.add_edge("collect_gaps", "summarize")
     graph.add_edge("summarize", "choose_next")

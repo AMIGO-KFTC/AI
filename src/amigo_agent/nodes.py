@@ -30,7 +30,7 @@ from .parties import consolidate_parties, remap_ids
 from .questions import rank_by_value
 from .llm import LLMError, LLMOutputError
 from .precedence import RANK_USER, now_ts
-from .render import render_document
+from .render import render_document, unlinked_children
 from .state import (
     AgentState,
     Gap,
@@ -40,6 +40,7 @@ from .state import (
     evaluate_coverage,
     find_item,
     merge_item_fields,
+    new_id,
     open_gaps,
     resolve_slots,
     turn,
@@ -132,7 +133,8 @@ def prepare(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]
 
 def fan_out(state: AgentState) -> list[Send]:
     """슬롯별 분석을 병렬로 실행한다(LangGraph Send 를 이용한 map-reduce)."""
-    return [Send("analyze_slot", {"slot_key": key, "profile": state.get("profile", {})}) for key in (s.key for s in slots_for(state.get("profile")))]
+    # 다른 장에 붙는 장(협업관계·비상 대응)은 붙는 장의 이름이 나온 뒤에 분석한다(analyze_children)
+    return [Send("analyze_slot", {"slot_key": key, "profile": state.get("profile", {})}) for key in (s.key for s in slots_for(state.get("profile"))) if not SLOT_BY_KEY[key].embed_into]
 
 
 def analyze_slot(payload: dict[str, Any], runtime: Runtime[AgentContext]) -> dict[str, Any]:
@@ -146,11 +148,69 @@ def analyze_slot(payload: dict[str, Any], runtime: Runtime[AgentContext]) -> dic
     return {"slots": {key: slot}}
 
 
+def analyze_children(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
+    """다른 장에 붙는 장(주요 협업관계·비상 대응)을 분석한다. 붙는 장(프로젝트·세부 업무)의 항목 이름을 프롬프트에 주어 연결 필드를 그 이름과 글자 그대로 쓰게 한다."""
+    profile = state.get("profile", {})
+    children = [s.key for s in slots_for(profile) if SLOT_BY_KEY[s.key].embed_into]
+    if not children:
+        return {}
+    slots = state.get("slots") or {}
+    out: dict[str, Any] = {}
+    for key in children:
+        spec = SLOT_BY_KEY[key]
+        _progress(f"'{spec.title}' 분석 중", slot=key, status="running")
+        result = _analyze(runtime.context, key, {**profile, "_link_slots": slots})
+        slot = _slot_with_gaps(result)
+        _emit({"type": "slot", "key": key, "slot": result.slot})
+        _progress(f"'{spec.title}' 분석 완료 · {COVERAGE_LABELS.get(slot['coverage'], '')}", slot=key, status="done")
+        out[key] = slot
+    return {"slots": out}
+
+
+MAX_LINK_GAPS = 2  # 장마다 만드는 연결 질문 수
+
+
+def _link_gaps(slots: dict[str, Any], active: list[Any], gaps: list[Gap]) -> list[Gap]:
+    """협업관계·비상 대응 항목이 붙는 장(프로젝트·세부 업무)의 어느 항목에도 맞지 않으면, 어느 항목인지 묻는 질문을 만든다(문서는 양식에 없는 표를 싣지 않는다)."""
+    linked_asked = {g.get("item_id") for g in gaps if g.get("link_field")}  # 이미 연결을 묻는 항목
+    any_asked = {g.get("item_id") for g in gaps if g.get("item_id")}
+    made: list[Gap] = []
+    per_slot: dict[str, int] = {}
+    for child, item in unlinked_children(slots, active):
+        value = str((item.get("fields") or {}).get(child.embed_link) or "").strip()
+        # 연결 값이 비어 있으면 그 값을 묻는 기존 질문이 이미 있는 것이므로 건너뛰고, 값이 있는데 맞는 카드가 없을 때만(연락처 같은 다른 질문과 별개로) 따로 묻는다
+        if item.get("id") in linked_asked or (not value and item.get("id") in any_asked) or per_slot.get(child.key, 0) >= MAX_LINK_GAPS:
+            continue
+        per_slot[child.key] = per_slot.get(child.key, 0) + 1
+        parent = SLOT_BY_KEY[child.embed_into]
+        names = [str((p.get("fields") or {}).get(parent.title_field) or p.get("title") or "") for p in (slots.get(child.embed_into) or {}).get("items", [])]
+        names = [n for n in names if n][:6]
+        who = (item.get("fields") or {}).get("party") or item.get("title") or "항목"
+        body = str((item.get("fields") or {}).get("discussed") or "")[:40]
+        choices = f" ({', '.join(names)} 중에서 알려 주세요)" if names else ""
+        made.append(
+            {
+                "id": new_id("gap"),
+                "slot": child.key,
+                "item_id": item["id"],
+                "description": f"'{who}'의 {child.embed_label}이(가) 어느 {parent.label(parent.title_field)}에 해당하는지 모름",
+                "question": f"'{who}'의 {child.embed_label}{f'({body})' if body else ''}은(는) 어느 {parent.label(parent.title_field)}에 해당하나요?{choices}",
+                "priority": 1,
+                "weight": 1,
+                "link_field": child.embed_link,
+                "ask_for_document": False,
+                "status": "open",
+            }
+        )
+    return made
+
+
 def collect_gaps(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     gaps: list[Gap] = []
     active = slots_for(state.get("profile"))
     for key in (s.key for s in active):
         gaps.extend(copy.deepcopy((state.get("slots") or {}).get(key, {}).get("proposed_gaps", [])))
+    gaps.extend(_link_gaps(state.get("slots") or {}, active, gaps))  # 어느 프로젝트·세부 업무인지 맞출 수 없는 항목은 묻는다
     ordered = open_gaps(gaps)
     try:  # 장마다 따로 만든 질문 후보에서 중복을 빼고 전체 순서를 정한다
         order, drops = runtime.context.engine.plan_questions(state.get("profile", {}), ordered)

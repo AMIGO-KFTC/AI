@@ -142,7 +142,7 @@ def test_offline_pipeline_applies_precedence_between_documents():
     assert team["fields"]["discussed"] == "내선 2222"
     assert team["conflicts"] and team["conflicts"][0]["dropped"] == "내선 1111"
     doc = agent.finish("p1", kb).snapshot["document"]
-    assert "| 내선 2222 |" in doc and "내선 1111" not in doc  # 문서에는 적용한 값만 쓴다
+    assert "협의내용: 내선 2222" in doc and "내선 1111" not in doc  # 문서에는 적용한 값만 쓴다(프로젝트를 맞출 수 없어 확인 필요 사항에 올라간다)
     assert "자동으로 처리한 정보 충돌" not in doc
 
 
@@ -206,7 +206,8 @@ def test_deferred_candidates_are_resolved_later_with_same_result_as_immediate():
 def test_graph_has_resolve_conflicts_nodes_at_each_merge_point():
     diagram = HandoverAgent().mermaid()
     for edge in (
-        "analyze_slot --> resolve_conflicts;",
+        "analyze_slot --> analyze_children;",
+        "analyze_children --> resolve_conflicts;",
         "resolve_conflicts --> collect_gaps;",
         "interpret --> resolve_answer;",
         "resolve_answer -.-> wait_user;",

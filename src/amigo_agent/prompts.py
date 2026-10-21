@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .links import link_names_block
+from .dept_info import clean_dept_info, has_info, targets as dept_targets
 from .state import Gap, SlotState, Turn
 from .template import COVERAGE_LABELS, MODE_LABELS, SLOT_BY_KEY, SLOTS, SlotSpec, mode_of
 
@@ -32,6 +34,7 @@ ANALYSIS_SYSTEM = """\
 - 질문은 인계자가 당시 상황을 떠올릴 수 있게 구체적인 업무·시점·상대를 들어 묻습니다(예: '차액 정산 방식을 지금처럼 정하기까지 어떤 논의가 있었나요?').
 - 시스템 ID·비밀번호·토큰 같은 민감 정보는 기록하지 않고 질문하지도 않습니다. 시스템 이름과 권한 신청 방법만 다룹니다.
 - 모든 문장은 한국어 존댓말로 씁니다.
+
 """
 
 INTERPRET_SYSTEM = """\
@@ -57,6 +60,7 @@ PLAN_SYSTEM = """\
   2) 업무를 이어받는 데 꼭 필요한 권한·계정·처리 방법
   3) 진행 중인 과제의 현재 상태와 다음 할 일
   4) 그 밖의 배경 정보
+- 팀 전용 프롬프트가 있으면 그 관점과 우선순위를 순서에 반영합니다.
 - 질문 문장은 바꾸지 않습니다.
 """
 
@@ -106,6 +110,17 @@ def clean_team_guidelines(guidelines: dict[str, Any] | None) -> dict[str, Any]:
     return {"items": items[:MAX_TEAM_ITEMS], "notes": notes, "prompt": prompt}
 
 
+def team_prompt_block(guidelines: dict[str, Any] | None) -> str:
+    """팀 전용 프롬프트만(질문 순서 정하기·안내문 쓰기용). 비어 있으면 빈 문자열."""
+    prompt = clean_team_guidelines(guidelines)["prompt"]
+    if not prompt:
+        return ""
+    return (
+        "## 팀 전용 프롬프트 (팀 관리자가 정한 역할과 판단 기준)\n" + prompt
+        + "\n이 프롬프트의 관점과 우선순위를 따릅니다. 시스템 원칙(근거·민감 정보)과 부딪치면 시스템 원칙을 따릅니다."
+    )
+
+
 def team_guidelines_block(guidelines: dict[str, Any] | None, *, slot_key: str = "") -> str:
     """팀 관리자가 정한 '우리 팀 인수인계서 지침'을 프롬프트 한 구간으로 만든다. 지침이 비어 있으면 빈 문자열.
 
@@ -126,6 +141,10 @@ def team_guidelines_block(guidelines: dict[str, Any] | None, *, slot_key: str = 
         lines.append("")
         lines.append("### 팀 전용 프롬프트 (팀 관리자가 정한 역할과 판단 기준)")
         lines.append(data["prompt"])
+        lines.append(
+            "위 프롬프트는 자료를 분석하고 정리하는 데만 쓰지 않고, 인계자에게 던지는 질문(gaps)에도 적용합니다. "
+            "무엇을 먼저·중요하게 물을지, 어떤 관점과 표현으로 물을지, 꼭 확인할 사항을 위 프롬프트에 맞춥니다. 위 프롬프트와 시스템 원칙(근거·민감 정보)이 부딪치면 시스템 원칙을 따릅니다."
+        )
     if data["items"]:
         lines.append("")
         lines.append("### 우리 팀 인수인계서에 담는 항목")
@@ -154,6 +173,68 @@ def team_guidelines_block(guidelines: dict[str, Any] | None, *, slot_key: str = 
     return "\n".join(lines)
 
 
+# 부서별 특이사항(사내 문서의 요약): 부서 / 중요문서 위치 / 관리 가맹점 / 라이센스 업체. 정보일 뿐 사실의 근거가 아니다(dept_info.py).
+COLLABORATION_SLOTS = ("stakeholders", "leave_contacts", "irregular", "regular", "leave_tasks")
+
+
+def _info_lines(info: dict[str, Any], *, with_location: bool = True) -> list[str]:
+    lines = []
+    if info["documents"]:
+        docs = "; ".join(f"{d['name']}({d['location']})" if with_location and d["location"] else d["name"] for d in info["documents"])
+        lines.append(f"- 중요문서 위치: {docs}")
+    lines.append("- 관리 가맹점: " + ("; ".join(info["franchises"]) if info["franchises"] else "없음"))
+    lines.append("- 라이센스 업체: " + ("; ".join(f"{l['vendor']}({l['product']})" if l["product"] else l["vendor"] for l in info["licenses"]) if info["licenses"] else "없음"))
+    return lines
+
+
+def dept_notes_block(profile: dict[str, Any], *, slot_key: str = "", purpose: str = "") -> str:
+    """소속 부서의 특이사항(중요문서 위치·관리 가맹점·라이센스 업체)을 프롬프트 한 구간으로 만든다. 정보가 없으면 빈 문자열.
+
+    - slot_key == "dept_notes": 이 장에서 각 대상(라이센스 업체·가맹점·중요 문서)이 자료에서 어떻게 관리되는지 찾고, 자료에 없으면 '관리 방식'을 인계자에게 묻는다.
+    - 그 밖의 장(slot_key): 관련 있는 정보만 분석·질문에 참고한다. 협업 장에서는 협업 부서 정보도 함께 준다.
+    - purpose == "plan": 질문 순서 프롬프트용(이름만, 같은 대상을 묻는 질문은 중복으로 본다).
+    - 그 밖(slot_key 없음): 인계자와 대화하는 프롬프트용(답변을 이 정보의 대상 이름으로 정리).
+    이 정보는 사실의 근거가 아니다. 근거 ID·민감 정보 원칙은 바뀌지 않는다.
+    """
+    info = clean_dept_info((profile or {}).get("dept_notes"))
+    if not has_info(info):
+        return ""
+    lines = [
+        f"## 우리 부서 특이사항 ({info['department'] or profile.get('organization', '')})",
+        "사내 부서별 특이사항 문서의 요약으로, 이 부서가 실제로 관리하는 대상의 목록입니다. 정보 자체는 인수인계서 항목의 근거가 아닙니다. "
+        "항목의 내용은 여전히 근거 자료와 인계자 답변에서만 가져오고, 근거 ID 를 붙이는 원칙과 시스템 ID·비밀번호 같은 민감 정보를 다루지 않는 원칙은 바뀌지 않습니다.",
+    ]
+    if purpose == "plan":
+        names = [t["name"] for t in dept_targets(info)]
+        lines.append("관리 대상: " + ", ".join(names))
+        lines.append("이 대상들의 관리 방식을 확인하는 질문은 인수자가 부서 업무를 이어받는 데 필요한 정보이므로 순서를 정할 때 가볍게 보지 않습니다. 같은 대상을 묻는 질문끼리는 중복으로 봅니다.")
+        return "\n".join(lines)
+    lines += _info_lines(info)
+    if slot_key == "dept_notes":
+        lines.append(
+            "\n이 장(부서별 추가 자료)에서는 위 대상(라이센스 업체·관리 가맹점·중요 문서) 각각이 근거 자료에서 실제로 어떻게 관리되는지 찾습니다. "
+            "자료에서 찾은 대상은 대상 이름을 '추가 자료'로, 자료에 적힌 구체적인 내용(담당자·계약 기간·갱신 시기·점검 주기·관리 방식)을 '관리 내용'으로 적고 근거 ID 를 붙입니다. 위 목록의 이름과 위치만 옮겨 적지 않습니다. "
+            "자료에 관리 내용이 없는 대상은 인계자에게 확인할 질문(gaps)으로 만듭니다. 이 장의 gaps 는 이런 대상의 '관리 방식'을 묻는 질문으로만 채우고(대상과 무관한 일반 질문은 이 장에서 만들지 않습니다), "
+            "업체·가맹점·문서 이름을 넣어 구체적으로 묻습니다. 업체 이름이나 문서 위치처럼 위 목록에 이미 있는 정보는 다시 묻지 않습니다. 대상이 여럿이면 인수인계에 더 중요한 것부터 gaps 한도까지 만듭니다."
+        )
+    elif slot_key:
+        lines.append("\n이 장과 관련된 대상이 자료나 대화에 나오면 위 정보를 참고해 분석에 반영하세요(예: 같은 업체·문서). 관련 없는 정보는 무시하세요(부서별 추가 자료 장에서 다룹니다). 목록에 있다는 이유만으로 자료에 없는 내용을 사실로 쓰지 않습니다.")
+    else:
+        lines.append(
+            "\n인계자의 답변이 위 대상(라이센스 업체·관리 가맹점·중요 문서)의 관리 방식에 해당하면, 대상 이름을 '추가 자료'로·답변 내용을 '관리 내용'으로 해 부서별 추가 자료(dept_notes) 장의 항목으로 updates 에 담고 그 질문(gap)도 해소로 처리합니다. "
+            "답변이 위 정보와 어긋나면(예: 업체가 바뀌었다, 문서 위치가 다르다) reply 에서 정중하게 어느 쪽이 맞는지 확인합니다. 새 질문은 덧붙이지 않습니다."
+        )
+    if slot_key in COLLABORATION_SLOTS or (not slot_key and not purpose):
+        if info["others"]:
+            lines.append("\n### 협업 부서 정보(참고)")
+            for name, entries in info["others"].items():
+                parts = [*(f"문서 {d['name']}({d['location']})" if d["location"] else f"문서 {d['name']}" for d in entries["documents"]),
+                         *(f"가맹점 {f}" for f in entries["franchises"]), *(f"라이센스 {l['vendor']}" for l in entries["licenses"])]
+                lines.append(f"- {name}: " + ", ".join(parts))
+            lines.append("협의 상대·협업 내용이 위 부서이면 협의내용을 정리하거나 질문할 때 참고합니다.")
+    return "\n".join(lines)
+
+
 def slot_spec_block(spec: SlotSpec) -> str:
     fields = "\n".join(f"- {f.key}({f.label}){': ' + f.hint if f.hint else ''}" for f in spec.fields)
     return (
@@ -164,7 +245,9 @@ def slot_spec_block(spec: SlotSpec) -> str:
 
 def analysis_user(spec: SlotSpec, profile: dict[str, Any], evidence_text: str, max_gaps: int) -> str:
     team = team_guidelines_block(profile.get("team_guidelines"), slot_key=spec.key)
-    team_section = f"{team}\n\n" if team else ""
+    dept = dept_notes_block(profile, slot_key=spec.key)
+    links = link_names_block(profile["_link_slots"], spec) if profile.get("_link_slots") is not None else ""
+    team_section = (f"{team}\n\n" if team else "") + (f"{dept}\n\n" if dept else "") + (f"{links}\n\n" if links else "")
     evidence = evidence_text or "(검색된 근거가 없습니다. 필요하면 search_documents 로 직접 찾아보세요.)"
     return (
         f"## 인계자 정보\n{profile_block(profile)}\n\n{slot_spec_block(spec)}\n\n{team_section}"
@@ -227,7 +310,8 @@ def interpret_user(
     else:
         gap_text = "(현재 질문 없음)"
     team = team_guidelines_block(profile.get("team_guidelines"))
-    team_section = f"{team}\n\n" if team else ""
+    dept = dept_notes_block(profile)
+    team_section = (f"{team}\n\n" if team else "") + (f"{dept}\n\n" if dept else "")
     stage_note = "문서 초안을 검토하는 단계입니다. 인계자의 수정 요청을 항목에 반영하세요." if stage == "review" else "질의응답 단계입니다."
     return (
         f"## 인계자 정보\n{profile_block(profile)}\n\n{team_section}## 진행 단계\n{stage_note}\n\n"
@@ -239,7 +323,10 @@ def interpret_user(
 
 def plan_user(profile: dict[str, Any], gaps: list[Gap]) -> str:
     lines = [f"- {g['id']} [{SLOT_BY_KEY[g['slot']].title}] {g.get('question', '')}" for g in gaps]
-    return f"## 인계자 정보\n{profile_block(profile)}\n\n## 질문 후보\n" + "\n".join(lines)
+    dept = dept_notes_block(profile, purpose="plan")
+    team = team_prompt_block(profile.get("team_guidelines"))
+    sections = "".join(f"{block}\n\n" for block in (team, dept) if block)
+    return f"## 인계자 정보\n{profile_block(profile)}\n\n{sections}## 질문 후보\n" + "\n".join(lines)
 
 
 def summary_user(profile: dict[str, Any], slots: dict[str, SlotState], sources: list[dict]) -> str:
@@ -251,4 +338,6 @@ def summary_user(profile: dict[str, Any], slots: dict[str, SlotState], sources: 
         slot = slots.get(spec.key) or {}
         coverage = COVERAGE_LABELS.get(slot.get("coverage", "missing"), "")
         lines.append(f"- {spec.title}: {coverage} / {slot.get('summary', '')}")
-    return f"## 인계자 정보\n{profile_block(profile)}\n\n## 분석한 자료\n{names}\n\n## 장별 분석 결과\n" + "\n".join(lines)
+    team = team_prompt_block(profile.get("team_guidelines"))
+    team_section = f"{team}\n\n" if team else ""
+    return f"## 인계자 정보\n{profile_block(profile)}\n\n{team_section}## 분석한 자료\n{names}\n\n## 장별 분석 결과\n" + "\n".join(lines)
