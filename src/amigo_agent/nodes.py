@@ -53,6 +53,13 @@ logger = logging.getLogger(__name__)
 QUICK_REPLIES_QNA = ["모르겠어요 (건너뛰기)", "지금 문서 생성"]
 QUICK_REPLIES_CONFIRM = ["네, 맞아요", "수정할게요"]
 MAX_CONFIRM_ROUNDS = 2  # 정리한 내용과 한 번 고친 내용까지 확인을 묻고, 그다음 고침은 바로 반영
+# 정리한 내용이 맞는지 물었을 때 이렇게만 답하면 LLM 에 묻지 않고 바로 확정한다(빠른 답변 단추 포함).
+PLAIN_CONFIRMS = frozenset({"네", "네.", "네!", "예", "예.", "응", "넵", "넹", "맞아요", "맞아요.", "맞습니다", "맞습니다.", "네, 맞아요", "네 맞아요", "네, 맞아요.", "네 맞습니다", "네, 맞습니다", "그렇습니다", "확인", "확인했어요", "ok", "okay", "yes"})
+
+
+def is_plain_confirm(text: str) -> bool:
+    """'네, 맞아요' 처럼 확인만 하는 짧은 답인지. 새 정보가 섞인 답('네, 그리고 내선은 3311')은 아니다."""
+    return " ".join(text.split()).strip().lower() in PLAIN_CONFIRMS
 
 
 @dataclass
@@ -341,10 +348,17 @@ def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
         open_gaps=open_gaps(gaps),
         transcript=list(state.get("transcript") or []),
     )
-    try:
-        result: Interpretation = ctx.engine.interpret(data, ctx.kb)
-    except LLMOutputError:
-        result = _offline(ctx).interpret(data, ctx.kb)
+    if pending and stage != "review" and is_plain_confirm(text):
+        # 확인 단추·'네' 는 해석할 것이 없다. LLM 이 확인 답변을 새 정보로 오해해 같은 정리를 다시 되묻는 일도 막는다.
+        result = Interpretation(intent="confirm", reply="확인했습니다.")
+    else:
+        try:
+            result = ctx.engine.interpret(data, ctx.kb)
+        except LLMOutputError:
+            result = _offline(ctx).interpret(data, ctx.kb)
+        if result.intent == "confirm" and result.updates and pending and stage != "review":
+            # 맞다고 하면서 정리한 내용을 그대로 되돌려 준 경우: 새 정보가 아니므로 확정으로 처리한다.
+            result = Interpretation(intent="confirm", reply=result.reply, resolved_gap_ids=result.resolved_gap_ids)
 
     out: dict[str, Any] = {"last_intent": result.intent, "transcript": [user_turn]}
     intent = result.intent

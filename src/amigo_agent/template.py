@@ -246,7 +246,7 @@ SLOTS: tuple[SlotSpec, ...] = (
         fields=(
             FieldSpec("topic", "추가 자료", "예: 가맹점 관리, 외주 관리, 라이선스"),
             FieldSpec("detail", "관리 내용", "무엇을 어떻게 챙겨야 하는지"),
-            FieldSpec("basis", "근거", "사무인수인계서 사무목록·세부시행세칙 등"),
+            FieldSpec("basis", "관련 규정·자료", "사무인수인계서 사무목록·세부시행세칙 등"),  # 문서 표의 근거 번호 열('근거')과 이름이 겹치지 않게
         ),
         required=("topic", "detail"),
         min_items=1,
