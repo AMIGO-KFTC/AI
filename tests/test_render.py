@@ -93,8 +93,9 @@ def test_collaboration_is_a_split_cell_inside_each_project_card():
     # 다른 프로젝트의 협업관계는 섞이지 않는다
     second_head = next(r for r in second if r[0]["text"] == "주요 협업관계 및 협의사항")
     assert second_head[0]["rowspan"] == 2 and texts(second[second.index(second_head) + 1]) == ["법무팀", "문구 검토", "-"]
-    # 프로젝트를 맞출 수 없는 항목은 따로 모아 보인다
-    assert "### 주요 협업관계 및 협의사항 · 연결되는 프로젝트명 없음" in md and "| 감사팀 | 없는 프로젝트 | 사전 점검 | - |" in md
+    # 프로젝트를 맞출 수 없는 항목은 양식에 없는 표로 싣지 않고 '확인 필요 사항'에 올린다
+    assert "연결되는" not in md and "| 감사팀 | 없는 프로젝트 | 사전 점검 | - |" not in md
+    assert "'감사팀'의 주요 협업관계 및 협의사항이(가) 어느 프로젝트명에 해당하는지 확인이 필요합니다 (입력된 프로젝트명: '없는 프로젝트', 협의내용: 사전 점검) (인계자 확인 필요)" in md
     # 별도 장·그림·삭제한 열은 없다
     assert "비정기 업무 협업관계 및 협의사항" not in "\n".join(line for line in md.splitlines() if line.startswith("## "))
     assert "```mermaid" not in md and "관계 유형" not in md and "연락처" not in md and "협의 상대" not in md
@@ -121,7 +122,9 @@ def test_collaboration_without_projects_is_still_shown():
     slots = empty_slots()
     collab(slots, "재무팀", "홈페이지 리뉴얼", discussed="예산 협의")
     md = render(slots)
-    assert "확인된 프로젝트가 없습니다" in md and "| 재무팀 | 홈페이지 리뉴얼 | 예산 협의 | - |" in md
+    assert "확인된 프로젝트가 없습니다" in md and "| 재무팀 | 홈페이지 리뉴얼 | 예산 협의 | - |" not in md  # 양식에 없는 표로 싣지 않는다
+    tail = md[md.index("확인 필요 사항"):]
+    assert "'재무팀'의 주요 협업관계 및 협의사항이(가) 어느 프로젝트명에 해당하는지 확인이 필요합니다" in tail and "홈페이지 리뉴얼" in tail and "예산 협의" in tail  # 내용은 확인 필요 사항에 남는다
 
 
 def test_leave_version_uses_the_same_designs():

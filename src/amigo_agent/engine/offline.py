@@ -10,6 +10,7 @@ import re
 from typing import Any
 
 from ..config import AgentConfig
+from ..dept_info import clean_dept_info, has_info, interleave, targets as dept_targets
 from ..kb import Evidence, KBAdapter
 from ..parties import consolidate_parties
 from ..state import Gap, SlotItem, SlotState, evaluate_coverage, item_label, missing_fields, new_id, upsert_item
@@ -142,10 +143,43 @@ class OfflineEngine:
         if spec.key in PARTY_SLOTS:
             consolidate_parties(slot["items"])
             del slot["items"][8:]
+        note_gaps = self._dept_note_gaps(spec, slot, usable, profile)  # 부서별 특이사항: 자료에 나오면 항목으로, 없으면 확인 질문으로
         items = slot["items"]
         slot["coverage"] = evaluate_coverage(spec, items)
         slot["summary"] = self._slot_summary(spec, items)
-        return SlotResult(slot=slot, gaps=self._gaps(spec, items, slot["coverage"]))
+        gaps = note_gaps if note_gaps is not None else self._gaps(spec, items, slot["coverage"])
+        return SlotResult(slot=slot, gaps=gaps)
+
+    def _dept_note_gaps(self, spec: SlotSpec, slot: SlotState, evidences: list[Evidence], profile: dict[str, Any]) -> list[Gap] | None:
+        """'부서별 추가 자료' 장에서 이 부서가 관리하는 대상(라이센스 업체·가맹점·중요 문서)을 자료와 맞춰 본다. 정보가 없으면 None(기본 동작)."""
+        info = clean_dept_info(profile.get("dept_notes")) if spec.key == "dept_notes" else None
+        if info is None or not has_info(info):
+            return None
+        gaps: list[Gap] = []
+        for target in interleave(dept_targets(info)):
+            name = target["name"]
+            hit = next((ev for ev in evidences if name in ev.text), None)
+            sentence = ""
+            if hit is not None:
+                sentence = next((ln.strip(" -•*|") for ln in re.split(r"[\n.。]", hit.text) if name in ln and len(ln.strip()) >= 8), "")
+            if hit is not None and sentence:
+                upsert_item(slot, item_id="", title=name, fields={"topic": name, "detail": sentence[:200]}, citations=[hit.to_citation(name)], origin="document", defer=True)
+                continue
+            gaps.append(
+                {
+                    "id": new_id("gap"),
+                    "slot": spec.key,
+                    "item_id": "",
+                    "description": f"{target['label']} '{name}'의 관리 내용이 자료에서 확인되지 않음",
+                    "question": target["question"],
+                    "priority": 2,
+                    "weight": len(spec.required),
+                    "note_topic": name,
+                    "ask_for_document": False,
+                    "status": "open",
+                }
+            )
+        return gaps[: max(self.config.max_gaps_per_slot, 3)]
 
     def _add(self, slot: SlotState, title: str, fields: dict[str, str], ev: Evidence) -> None:
         limit = 40 if slot.get("key") in PARTY_SLOTS else 8  # 협의 상대는 같은 상대끼리 합친 뒤 개수를 자른다
@@ -336,6 +370,20 @@ class OfflineEngine:
             return Interpretation("correct", reply="어떤 부분을 어떻게 고치면 될지 말씀해 주세요.")
 
         gap = data.current_gap
+        if gap and gap.get("link_field") and not (data.pending and NEGATIVE_RE.match(text)):  # '어느 프로젝트·세부 업무인지' 묻는 질문의 답: 연결 필드 값이 된다
+            slot = data.slots.get(gap["slot"]) or {"items": []}
+            target = next((it for it in slot.get("items", []) if it.get("id") == gap.get("item_id")), None)
+            spec = SLOT_BY_KEY[gap["slot"]]
+            title = item_label(spec, target) if target else short_title(text, 24)
+            update = {"slot": gap["slot"], "item_id": gap.get("item_id") or "", "title": title, "fields": {gap["link_field"]: text}, "citations": []}
+            reply = f"다음과 같이 정리했어요.\n\n**[{spec.title}] {title}**\n- **{spec.label(gap['link_field'])}**: {text}\n\n맞으면 '네', 고칠 부분이 있으면 말씀해 주세요."
+            return Interpretation("answer", updates=[update], resolved_gap_ids=[gap["id"]], reply=reply)
+        if gap and gap.get("note_topic") and not (data.pending and NEGATIVE_RE.match(text)):  # 부서 특이사항 확인 질문의 답변: 이름은 특이사항, 내용은 답변
+            topic = gap["note_topic"]
+            fields = {"topic": topic, "detail": text}
+            update = {"slot": gap["slot"], "item_id": "", "title": topic, "fields": fields, "citations": []}
+            reply = f"다음과 같이 정리했어요.\n\n**[{SLOT_BY_KEY[gap['slot']].title}] {topic}**\n- **{SLOT_BY_KEY[gap['slot']].label('detail')}**: {text}\n\n맞으면 '네', 고칠 부분이 있으면 말씀해 주세요."
+            return Interpretation("answer", updates=[update], resolved_gap_ids=[gap["id"]], reply=reply)
         correcting = bool(data.pending) and bool(NEGATIVE_RE.match(text))
         if correcting:
             text = NEGATIVE_RE.sub("", text).lstrip(" ,.").strip() or text

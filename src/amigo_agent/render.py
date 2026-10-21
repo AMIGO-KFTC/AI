@@ -102,7 +102,7 @@ def _same_project(a: str, b: str) -> bool:
     return bool(x and y) and (x == y or (min(len(x), len(y)) >= 4 and (x in y or y in x)))
 
 
-def _render_cards(out: list[str], spec, items: list[dict], cites: _Citations, children: list[tuple[SlotSpec, list[dict]]]) -> None:
+def _render_cards(out: list[str], spec, items: list[dict], cites: _Citations, children: list[tuple[SlotSpec, list[dict]]]) -> list[tuple[SlotSpec, dict]]:
     """항목마다 '항목 | 내용' 표로 보여 준다.
 
     다른 장에서 옮겨 온 항목(협업관계·비상 대응)이 있으면 그 행의 칸을 나눠 담당자 | 협의내용 | 추후 고려사항 표로 넣으므로
@@ -144,17 +144,34 @@ def _render_cards(out: list[str], spec, items: list[dict], cites: _Citations, ch
             rows.append(f'<tr><th>근거</th><td colspan="3">{_h(cites.refs(item))}</td></tr>')
         rows.append("</table>")
         out += rows + [""]
-    for child_spec, child_items in children:  # 어느 프로젝트인지 맞출 수 없는 항목은 따로 모아 둔다
-        rest = [c for c in child_items if id(c) not in claimed]
-        if rest:
-            link = child_spec.label(child_spec.embed_link)
-            out += [f"### {child_spec.embed_label} · 연결되는 {link} 없음", ""]
-            headers = [child_spec.label("party"), link, child_spec.label("discussed"), child_spec.label("upcoming")]
-            out += ["| " + " | ".join(headers) + " |", "|---|---|---|---|"]
-            for c in rest:
-                cf = c.get("fields") or {}
-                out.append("| " + " | ".join(_cell(cf.get(k)) for k in ("party", child_spec.embed_link, "discussed", "upcoming")) + " |")
-            out.append("")
+    # 어느 카드에도 맞지 않는 항목은 양식에 없는 표로 따로 싣지 않는다. 문서의 '확인 필요 사항'에 올려 인계자가 어느 항목인지 정하게 한다.
+    return [(child_spec, c) for child_spec, child_items in children for c in child_items if id(c) not in claimed]
+
+
+def unlinked_text(child: SlotSpec, item: dict) -> str:
+    """연결되지 않은 항목을 '확인 필요 사항' 한 줄로(내용을 잃지 않게 담당자·연결 이름·내용을 함께 적는다)."""
+    fields = item.get("fields") or {}
+    parent = SLOT_BY_KEY[child.embed_into]
+    who = fields.get("party") or item.get("title") or "항목"
+    said = fields.get(child.embed_link)
+    hint = f"입력된 {child.label(child.embed_link)}: '{said}', " if said else ""
+    body = fields.get("discussed") or "-"
+    return f"'{who}'의 {child.embed_label}이(가) 어느 {parent.label(parent.title_field)}에 해당하는지 확인이 필요합니다 ({hint}{child.label('discussed')}: {body})"
+
+
+def unlinked_children(slots: dict[str, SlotState], active: list[SlotSpec]) -> list[tuple[SlotSpec, dict]]:
+    """붙는 장(프로젝트·세부 업무)의 어느 항목과도 맞지 않는 협업관계·비상 대응 항목. 문서는 이런 항목을 양식에 없는 표로 싣지 않는다."""
+    out = []
+    for child in active:
+        if not child.embed_into:
+            continue
+        parent = SLOT_BY_KEY[child.embed_into]
+        names = [str((p.get("fields") or {}).get(parent.title_field) or item_label(parent, p)) for p in (slots.get(child.embed_into) or {}).get("items", [])]
+        for item in (slots.get(child.key) or {}).get("items", []):
+            value = str((item.get("fields") or {}).get(child.embed_link) or "")
+            if not any(_same_project(value, name) for name in names):
+                out.append((child, item))
+    return out
 
 
 def render_document(
@@ -205,11 +222,17 @@ def render_document(
             _render_table(out, spec, items, cites)
 
     pending = [g for g in gaps if g.get("status") in STATUS_LABEL]
+    loose = unlinked_children(slots, active)  # 어느 프로젝트·세부 업무인지 맞출 수 없는 항목은 내용과 함께 여기에 올린다
+    link_gap = {g.get("item_id"): g for g in pending if g.get("link_field")}  # 같은 항목을 묻는 연결 질문은 줄을 따로 만들지 않고 아래 줄에 상태만 붙인다
+    pending = [g for g in pending if not g.get("link_field") or g.get("item_id") not in {it.get("id") for _, it in loose}]
     out += [f"## {len(visible) + 1}. 확인 필요 사항", ""]
-    if pending:
+    if pending or loose:
         for gap in pending:
             title = SLOT_BY_KEY[gap["slot"]].title if gap.get("slot") in SLOT_BY_KEY else "기타"
             out.append(f"- [{title}] {gap.get('description') or gap.get('question')} ({STATUS_LABEL[gap['status']]})")
+        for child, item in loose:
+            status = STATUS_LABEL.get((link_gap.get(item.get("id")) or {}).get("status", ""), "인계자 확인 필요")
+            out.append(f"- [{child.title}] {unlinked_text(child, item)} ({status})")
     else:
         out.append("- 없음")
     out.append("")

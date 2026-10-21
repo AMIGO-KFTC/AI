@@ -149,7 +149,8 @@ def test_claude_engine_end_to_end(kb):
     doc = result.snapshot["document"]
     assert "## 1. 업무 개요" not in doc and "인수자 핵심 당부사항" not in doc
     assert {c["system"][0]["text"] for c in client.messages.calls} <= {ANALYSIS_SYSTEM, INTERPRET_SYSTEM, SUMMARY_SYSTEM}  # 문서 합성에는 모델을 쓰지 않는다
-    assert "| 재무팀 | 홈페이지 리뉴얼 | 대금 지급 협의 | - |" in doc  # 맞는 프로젝트가 없어 따로 모아 보인다
+    assert "연결되는" not in doc  # 맞는 프로젝트가 없는 협업관계는 따로 표로 싣지 않고
+    assert "[비정기 업무 협업관계 및 협의사항] '재무팀'의 주요 협업관계 및 협의사항이(가) 어느 프로젝트명에 해당하는지 확인이 필요합니다" in doc and "대금 지급 협의" in doc  # 확인 필요 사항에 내용과 함께 올린다
 
 
 def test_slot_output_models_are_strict():

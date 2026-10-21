@@ -140,6 +140,26 @@ class HandoverAgent:
             self.graph.update_state(config, {"slots": {key: slots[key]}, "document": markdown})
             return {"markdown": markdown, "version": version}
 
+    def update_profile(self, thread_id: str, patch: dict[str, Any]) -> bool:
+        """진행 중인 대화의 인계자 정보를 갱신한다(값이 None 이면 그 키를 지운다). 바뀐 것이 있으면 True.
+
+        팀 관리자가 분석을 시작한 뒤 팀 지침·프롬프트를 고쳐도 다음 답변 처리부터 새 내용이 반영되게 백엔드가 매 턴 앞에서 부른다.
+        """
+        with self._lock(thread_id):
+            if not self._has_state(thread_id):
+                return False
+            config = self._config(thread_id)
+            profile = dict((self.graph.get_state(config).values or {}).get("profile") or {})
+            changed = False
+            for key, value in patch.items():
+                if value is None:
+                    changed |= profile.pop(key, None) is not None
+                elif profile.get(key) != value:
+                    profile[key], changed = value, True
+            if changed:
+                self.graph.update_state(config, {"profile": profile})
+            return changed
+
     def delete(self, thread_id: str) -> None:
         self.checkpointer.delete_thread(thread_id)
 
