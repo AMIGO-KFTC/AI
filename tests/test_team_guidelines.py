@@ -5,6 +5,7 @@ from amigo_agent.prompts import (
     MAX_TEAM_ITEM_NAME,
     MAX_TEAM_ITEMS,
     MAX_TEAM_NOTES,
+    MAX_TEAM_PROMPT,
     analysis_user,
     clean_team_guidelines,
     interpret_user,
@@ -99,3 +100,22 @@ def test_interview_prompt_carries_guidelines():
     assert text.index("## 인계자 정보") < text.index(HEADING) < text.index("## 진행 단계")
     plain = interpret_user(profile=PROFILE, stage="qna", current_gap=None, pending_text="", slots={}, open_gaps=[], transcript=[], message="네")
     assert HEADING not in plain
+
+
+def test_team_prompt_goes_before_the_items_and_alone_is_enough():
+    block = team_guidelines_block({"items": GUIDE["items"], "notes": "", "prompt": "모든 항목 제목은 [웹팀] 으로 시작하세요."}, slot_key="regular")
+    assert "### 팀 전용 프롬프트" in block and "[웹팀] 으로 시작" in block
+    assert block.index("### 팀 전용 프롬프트") < block.index("### 우리 팀 인수인계서에 담는 항목")
+    only = team_guidelines_block({"prompt": "항상 존댓말로 쓰세요."}, slot_key="regular")
+    assert "항상 존댓말로 쓰세요." in only and "담는 항목" not in only
+    assert "근거 ID" in only and "민감 정보" in only  # 팀 전용 프롬프트도 근거·민감 정보 원칙을 바꾸지 못한다
+    assert team_guidelines_block({"prompt": "   "}) == ""  # 공백뿐이면 아무것도 넣지 않는다
+
+
+def test_team_prompt_reaches_both_prompts_and_is_limited():
+    guided = {**PROFILE, "team_guidelines": {"items": [], "notes": "", "prompt": "판단 기준: 담당자 연락처를 가장 먼저 확인한다."}}
+    assert "판단 기준: 담당자 연락처" in analysis_user(SLOT_BY_KEY["regular"], guided, "근거", 3)
+    chat = interpret_user(profile=guided, stage="qna", current_gap=None, pending_text="", slots={}, open_gaps=[], transcript=[], message="네")
+    assert "판단 기준: 담당자 연락처" in chat
+    assert len(clean_team_guidelines({"prompt": "가" * (MAX_TEAM_PROMPT + 10)})["prompt"]) == MAX_TEAM_PROMPT
+    assert clean_team_guidelines(None)["prompt"] == ""
