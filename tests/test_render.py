@@ -129,20 +129,17 @@ def test_collaboration_without_projects_is_still_shown():
 
 def test_leave_version_uses_the_same_designs():
     profile = {"name": "김민수", "mode": "leave"}
-    slots = empty_slots(["leave_units", "leave_tasks", "leave_contacts", "systems"])
+    slots = empty_slots(["leave_units", "leave_tasks", "systems"])
     slots["leave_units"]["items"] = [{"id": "u1", "title": "공동망 운영", "fields": {"name": "공동망 운영", "period": "11월~12월"}, "citations": [CITE]}]
-    slots["leave_tasks"]["items"] = [{"id": "t1", "title": "차액 정산", "fields": {"name": "차액 정산", "overview": "정산", "schedule": "매월 말"}, "citations": [CITE]}]
-    slots["leave_contacts"]["items"] = [
-        {"id": "c1", "title": "재무팀 박지훈 차장", "fields": {"party": "재무팀 박지훈 차장", "task": "차액 정산", "discussed": "내선 2345 로 문의", "upcoming": "복귀 후 정산"}, "citations": [CITE]}
+    slots["leave_tasks"]["items"] = [
+        {"id": "t1", "title": "차액 정산", "fields": {"name": "차액 정산", "overview": "정산", "schedule": "매월 말", "emergency": "재무팀 박지훈 차장(내선 2345)에게 문의"}, "citations": [CITE]}
     ]
     md = render(slots, profile=profile)
-    gantt, card = [t for t in html_tables(md) if t][:2]
+    gantt = [t for t in html_tables(md) if t][0]
     assert texts(gantt[0])[:2] == ["단위업무명", "1월"] and any("bar" in c["cls"] and c["colspan"] == 2 for c in gantt[1])  # 11~12월이 한 막대
-    head = next(r for r in card if r[0]["text"] == "비상 대응 및 협조사항")
-    assert head[0]["rowspan"] == 2 and texts(head)[1:] == ["담당자", "대응·협조 내용", "추후 고려사항"]
-    assert texts(card[card.index(head) + 1]) == ["재무팀 박지훈 차장", "내선 2345 로 문의", "복귀 후 정산"]
-    labels = [r[0]["text"] for r in card[1:] if r[0]["tag"] == "th"]
-    assert labels.index("비상 대응 및 협조사항") == labels.index("중점관리사항") + 1  # 템플릿의 5번 항목 자리
+    assert "| 비상 대응 및 협조사항 | 재무팀 박지훈 차장(내선 2345)에게 문의 |" in md  # 템플릿의 5번 항목이 카드의 한 행이다
+    rows = [line.split("|")[1].strip() for line in md.splitlines() if line.startswith("| ")]
+    assert rows.index("비상 대응 및 협조사항") == rows.index("중점관리사항") + 1  # 템플릿의 5번 항목 자리
     assert "## 1. 부재 중 처리할 단위 업무" in md and "## 2. 세부 업무" in md and "## 3. 시스템 접근 권한" in md
 
 

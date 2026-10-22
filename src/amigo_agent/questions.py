@@ -13,7 +13,7 @@ from .state import Gap, SlotState, find_item, missing_fields
 from .template import SLOT_BY_KEY
 
 PRIORITY_BONUS = 2.5  # 협의 상대·시스템 접근 권한은 자료에 거의 없어 꼭 물어야 하는 정보라 가산점을 준다
-BONUS_SLOTS = ("stakeholders", "leave_contacts", "systems")  # Claude 는 질문마다 priority 1 을 붙이는 경향이 있어 priority 값이 아니라 슬롯으로 정한다
+BONUS_SLOTS = ("stakeholders", "systems")  # Claude 는 질문마다 priority 1 을 붙이는 경향이 있어 priority 값이 아니라 슬롯으로 정한다
 
 
 def gap_weight(gap: Gap, slots: dict[str, SlotState]) -> int:

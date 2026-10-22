@@ -175,7 +175,7 @@ def team_guidelines_block(guidelines: dict[str, Any] | None, *, slot_key: str = 
 
 
 # 부서별 특이사항(사내 문서의 요약): 부서 / 중요문서 위치 / 관리 가맹점 / 라이센스 업체. 정보일 뿐 사실의 근거가 아니다(dept_info.py).
-COLLABORATION_SLOTS = ("stakeholders", "leave_contacts", "irregular", "regular", "leave_tasks")
+COLLABORATION_SLOTS = ("stakeholders", "irregular", "regular", "leave_tasks")
 
 
 def _info_lines(info: dict[str, Any], *, with_location: bool = True) -> list[str]:

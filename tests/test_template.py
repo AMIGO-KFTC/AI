@@ -20,7 +20,7 @@ def test_two_versions_have_their_own_chapters_in_template_order():
     # [인사발령] A 업무 단위 요약 → B 정기업무 → C 비정기 업무(+협업 표) → D 시스템 접근 권한 → E 부서별 추가 자료
     assert keys(PROFILE) == ["overview", "regular", "irregular", "stakeholders", "systems", "dept_notes"]
     # [장기휴가] A 부재 중 처리할 단위 업무 → B 세부 업무 → C 시스템 접근 권한
-    assert keys(LEAVE) == ["leave_units", "leave_tasks", "leave_contacts", "systems"]  # leave_contacts 는 세부 업무 카드 안에 들어간다
+    assert keys(LEAVE) == ["leave_units", "leave_tasks", "systems"]
     assert mode_of({}) != MODE_LEAVE and mode_of({"mode": "LEAVE"}) == MODE_LEAVE
 
 
@@ -51,12 +51,11 @@ def test_irregular_project_items_match_the_template_and_collaboration_is_a_table
 
 
 def test_leave_detail_items_match_the_template():
-    # 7개 항목 중 '5. 비상 대응 및 협조사항'은 담당자별 표(별도 슬롯)로 구성한다
-    assert labels("leave_tasks")[1:] == ["업무 개요", "주요 일정 및 처리사항", "업무 처리방법", "중점관리사항", "미결사항 및 후속 조치", "참고자료"]
+    # 템플릿의 7개 항목(5번 '비상 대응 및 협조사항' 포함)이 순서대로 세부 업무의 필드가 된다
+    assert labels("leave_tasks")[1:] == ["업무 개요", "주요 일정 및 처리사항", "업무 처리방법", "중점관리사항", "비상 대응 및 협조사항", "미결사항 및 후속 조치", "참고자료"]
+    assert SLOT_BY_KEY["leave_tasks"].field("emergency").hint == "문제가 발생하면 어떻게 대응하고 누구에게 문의해야 하는가?"  # 템플릿의 핵심 질문
     assert labels("leave_units")[0] == "단위업무명" and SLOT_BY_KEY["leave_units"].layout == "gantt"
-    contacts = SLOT_BY_KEY["leave_contacts"]
-    assert (contacts.embed_into, contacts.embed_after, contacts.embed_label) == ("leave_tasks", "key_points", "비상 대응 및 협조사항")
-    assert labels("leave_contacts") == ["담당자", "세부 업무명", "대응·협조 내용", "추후 고려사항"]
+    assert "leave_contacts" not in SLOT_BY_KEY  # 별도 슬롯이 아니다
 
 
 def test_system_access_slot_is_shared_and_keeps_passwords_blank():
@@ -69,9 +68,9 @@ def test_leave_version_runs_end_to_end_with_only_its_chapters():
     agent = HandoverAgent()
     seen = []
     result = agent.start("leave1", LEAVE, kb, on_event=seen.append)
-    assert {e["key"] for e in seen if e["type"] == "slot"} == {"leave_units", "leave_tasks", "leave_contacts", "systems"}
-    assert set(result.snapshot["slots"]) == {"leave_units", "leave_tasks", "leave_contacts", "systems"}
-    assert all(g["slot"] in {"leave_units", "leave_tasks", "leave_contacts", "systems"} for g in result.snapshot["gaps"])
+    assert {e["key"] for e in seen if e["type"] == "slot"} == {"leave_units", "leave_tasks", "systems"}
+    assert set(result.snapshot["slots"]) == {"leave_units", "leave_tasks", "systems"}
+    assert all(g["slot"] in {"leave_units", "leave_tasks", "systems"} for g in result.snapshot["gaps"])
     doc = agent.finish("leave1", kb).snapshot["document"]
     headings = [line for line in doc.splitlines() if line.startswith("## ")]
     assert headings[:3] == ["## 1. 부재 중 처리할 단위 업무", "## 2. 세부 업무", "## 3. 시스템 접근 권한"]

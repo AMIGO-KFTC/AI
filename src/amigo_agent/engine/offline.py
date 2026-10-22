@@ -62,18 +62,12 @@ HEADER_SYNONYMS: dict[str, dict[str, tuple[str, ...]]] = {
         "_person": ("담당자", "성명", "이름", "담당"),  # 부서 열이 따로 있으면 그 이름에 붙이고, 없으면 이 열이 담당자(팀 또는 개인)다
         "party": ("협의상대", "부서", "기관", "업체", "소속", "협업대상", "이해관계자"),
     },
-    "leave_contacts": {
-        "task": ("세부업무명", "관련업무", "업무명"),
-        "discussed": ("대응협조내용", "대응내용", "협조내용", "대응", "협조"),
-        "upcoming": ("추후고려사항", "고려사항"),
-        "_person": ("담당자", "성명", "이름", "문의처", "담당"),
-        "party": ("부서", "기관", "업체", "소속"),
-    },
     "leave_tasks": {
         "overview": ("업무개요", "개요", "설명"),
         "schedule": ("주요일정", "처리사항", "일정", "시기"),
         "method": ("처리방법", "방법", "절차"),
         "key_points": ("중점관리사항", "중요사항", "유의사항"),
+        "emergency": ("비상대응", "비상", "대응협조", "협조사항", "문의처"),
         "pending": ("미결사항", "후속조치", "미결"),
         "references": ("참고자료", "매뉴얼"),
         "name": ("세부업무명", "업무명", "업무", "작업"),
@@ -99,12 +93,11 @@ COMPANION_FIELDS: dict[str, set[str]] = {
     "irregular": {"overview", "goals", "progress", "future"},
     "stakeholders": {"discussed", "upcoming", "project", "_person"},
     "leave_tasks": {"schedule", "method", "overview"},
-    "leave_contacts": {"discussed", "upcoming", "task", "_person"},
     "systems": {"purpose", "access", "how_to_get"},
     "dept_notes": {"detail", "basis"},
 }
 
-PARTY_SLOTS = ("stakeholders", "leave_contacts")
+PARTY_SLOTS = ("stakeholders",)
 SENTENCE_FALLBACK_ONLY = {"overview", "leave_units", "systems", "irregular", "dept_notes"}
 
 DEPT_HINTS = re.compile(r"외주|가맹점|라이선스|라이센스|위탁|특이사항|세부시행세칙")
@@ -195,7 +188,7 @@ class OfflineEngine:
                 header = [c.strip() for c in lines[i].strip("|").split("|")]
                 mapping = self._map_header(spec.key, header)
                 j = i + 2
-                titled = spec.title_field in mapping.values() or (spec.key in ("stakeholders", "leave_contacts") and "_person" in mapping.values())
+                titled = spec.title_field in mapping.values() or (spec.key == "stakeholders" and "_person" in mapping.values())
                 usable = titled and bool(set(mapping.values()) & COMPANION_FIELDS[spec.key])
                 while j < len(lines) and lines[j].startswith("|"):
                     if usable:
@@ -206,7 +199,7 @@ class OfflineEngine:
                             timing = fields.get("timing", "")
                             if cycle and cycle not in timing:
                                 fields["timing"] = f"{cycle} {timing}".strip()
-                        if spec.key in ("stakeholders", "leave_contacts"):
+                        if spec.key == "stakeholders":
                             person = fields.pop("_person", "")
                             if person and not fields.get("party"):
                                 fields["party"] = person  # '담당자' 열만 있으면 그 열이 곧 담당자(팀 또는 개인)
@@ -304,7 +297,7 @@ class OfflineEngine:
         return f"{names}{more}"
 
     def _gaps(self, spec: SlotSpec, items: list[SlotItem], coverage: str) -> list[Gap]:
-        priority = 1 if spec.key in ("stakeholders", "leave_contacts", "systems") else 2
+        priority = 1 if spec.key in ("stakeholders", "systems") else 2
         if coverage == "missing":
             return [
                 {

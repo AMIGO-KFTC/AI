@@ -248,7 +248,7 @@ def resolve_conflicts(state: AgentState, runtime: Runtime[AgentContext]) -> dict
     return update
 
 
-PARTY_SLOTS = ("stakeholders", "leave_contacts")
+PARTY_SLOTS = ("stakeholders",)
 
 
 def merge_same_parties(slots: dict[str, Any], gaps: list[Any]) -> list[str]:

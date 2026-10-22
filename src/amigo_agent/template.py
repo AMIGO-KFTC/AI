@@ -4,7 +4,7 @@
 
 [인사발령]  A. 업무 단위 요약 + 일정 명세표(월별 막대) → B. 정기업무 → C. 비정기 업무(프로젝트성, 협업관계는 각 프로젝트 안) →
             D. 시스템 접근 권한 → E. 부서별 추가 자료
-[장기휴가]  A. 부재 중 처리할 단위 업무(월별 막대) → B. 세부 업무(비상 대응 및 협조사항은 담당자별 표) → C. 시스템 접근 권한
+[장기휴가]  A. 부재 중 처리할 단위 업무(월별 막대) → B. 세부 업무(비상 대응 및 협조사항 포함) → C. 시스템 접근 권한
 
 항목 이름은 페이지의 항목을, `hint` 는 그 항목의 '핵심 질문'을 그대로 옮긴 것이다(질문 설계와 AI 지침에 쓰인다).
 
@@ -179,45 +179,24 @@ SLOTS: tuple[SlotSpec, ...] = (
     SlotSpec(
         key="leave_tasks",
         title="세부 업무",
-        description="부재 기간 중 대신 처리할 세부 업무. 일정·처리방법과 비상 대응 및 협조(담당자별 표), 남은 일을 담는다.",
+        description="부재 기간 중 대신 처리할 세부 업무. 일정·처리방법과 비상 대응 및 협조사항, 남은 일을 담는다.",
         fields=(
             FieldSpec("name", "세부 업무명", "예: 차액 정산 수행"),
             FieldSpec("overview", "업무 개요", "어떤 업무이며, 무엇을 위한 업무인가?"),
             FieldSpec("schedule", "주요 일정 및 처리사항", "부재 기간 중 언제, 무엇을 처리해야 하는가?"),
             FieldSpec("method", "업무 처리방법", "어떻게 처리하면 되는가?"),
             FieldSpec("key_points", "중점관리사항", "무엇을 중요하게 관리하고 주의해야 하는가?"),
+            FieldSpec("emergency", "비상 대응 및 협조사항", "문제가 발생하면 어떻게 대응하고 누구에게 문의해야 하는가?"),
             FieldSpec("pending", "미결사항 및 후속 조치", "현재 남아 있는 일은 무엇이며, 누가 언제 처리해야 하는가?"),
             FieldSpec("references", "참고자료", "업무 처리에 필요한 매뉴얼, 관련 법령, 자료는 어디에 있는가?"),
         ),
-        required=("name", "overview", "schedule", "method"),
+        required=("name", "overview", "schedule", "method", "emergency"),
         min_items=1,
         modes=(MODE_LEAVE,),
         queries=("매일 매주 매월 정기 반복 업무", "처리 방법 절차 일정", "비상 연락 장애 대응 문의", "미결 남은 일 후속 조치"),
         keywords=("일정", "처리", "절차", "방법", "비상", "장애", "문의", "연락", "미결", "후속", "매뉴얼"),
         default_question="휴가 중에 대신 처리해야 하는 세부 업무가 있다면, 업무명과 처리 일정, 처리 방법, 문제가 생겼을 때 문의할 사람을 알려 주시겠어요?",
         layout="card",
-    ),
-    SlotSpec(
-        key="leave_contacts",
-        title="비상 대응 및 협조사항",
-        description="휴가 중 문제가 생기면 어떻게 대응하고 누구에게 문의·협조를 구하는지. 문서에서는 각 세부 업무의 '비상 대응 및 협조사항' 칸을 나눠 담당자 | 대응·협조 내용 | 추후 고려사항 표로 들어간다.",
-        fields=(
-            FieldSpec("party", "담당자", "팀 또는 개인. 예: 재무팀, 재무팀 박지훈 차장"),
-            FieldSpec("task", "세부 업무명", "어느 세부 업무에서의 대응·협조인지"),
-            FieldSpec("discussed", "대응·협조 내용", "문제가 발생하면 어떻게 대응하고 무엇을 문의·협조받는가?"),
-            FieldSpec("upcoming", "추후 고려사항"),
-        ),
-        required=("party", "task", "discussed"),
-        min_items=1,
-        modes=(MODE_LEAVE,),
-        queries=("비상 연락 장애 대응 문의", "협조 요청 담당자 연락", "문제 발생 시 대응 방법"),
-        keywords=("비상", "장애", "문의", "연락", "협조", "대응", "담당자"),
-        default_question="휴가 중 문제가 생기면 누구에게 어떻게 문의하면 되나요? 세부 업무별 담당자(팀 또는 개인)와 대응·협조 내용을 알려 주세요.",
-        evidence=False,
-        embed_into="leave_tasks",
-        embed_link="task",
-        embed_after="key_points",
-        embed_label="비상 대응 및 협조사항",
     ),
     # ------------------------------------------------------------------ 두 버전 공통: 시스템 접근 권한([인사발령] D / [장기휴가] C)
     SlotSpec(
