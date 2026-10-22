@@ -450,7 +450,8 @@ def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
         for g in gaps:
             if g["id"] in resolved and g.get("status") in ("asked", "answered", "open"):
                 g["status"] = "resolved"
-        out.update(gaps=gaps, slots=slots, pending={}, ack=result.reply if result.reply and len(result.reply) < 60 else "확인했습니다.")
+        # 직전 확인 메시지에서 이미 정리해 보여 줬으므로, 다음 질문 앞에 다시 정리·확인 문구를 붙이지 않는다.
+        out.update(gaps=gaps, slots=slots, pending={}, ack="")
         out["last_intent"] = "confirm"
         return out
 

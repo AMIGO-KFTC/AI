@@ -34,10 +34,11 @@ def test_full_flow_stage_1_to_4(kb):
     assert result.snapshot["pending"]["refs"]
     assert kb.added and "CD공동망 고도화" in kb.added[-1]  # 답변이 지식베이스에도 반영된다
 
-    # 확인 → 다음 질문(ack 포함): 시스템 접근 권한의 신청·이관 방법
+    # 확인 → 다음 질문(이전 답변을 다시 정리하는 문구 없이 질문만): 시스템 접근 권한의 신청·이관 방법
     result = agent.send_message("s1", "네", kb)
     assert kinds(result) == ["question"]
-    assert result.messages[0]["content"].startswith("확인했습니다.")
+    assert result.messages[0]["content"].startswith("**[")
+    assert "확인했습니다" not in result.messages[0]["content"]
     assert result.snapshot["question_count"] == 2
     assert result.messages[0]["meta"]["slot"] == "systems"
     agent.send_message("s1", "신청은 내선 2345 로 연락합니다", kb)
