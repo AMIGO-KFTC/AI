@@ -37,7 +37,7 @@ def test_full_flow_stage_1_to_4(kb):
     # 확인 → 다음 질문(이전 답변을 다시 정리하는 문구 없이 질문만): 시스템 접근 권한의 신청·이관 방법
     result = agent.send_message("s1", "네", kb)
     assert kinds(result) == ["question"]
-    assert result.messages[0]["content"].startswith("**[")
+    assert not result.messages[0]["content"].startswith(("**[", "["))  # 장 이름은 본문이 아니라 meta.slot 으로 알린다
     assert "확인했습니다" not in result.messages[0]["content"]
     assert result.snapshot["question_count"] == 2
     assert result.messages[0]["meta"]["slot"] == "systems"

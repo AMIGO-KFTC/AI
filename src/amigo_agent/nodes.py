@@ -331,7 +331,7 @@ def ask(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     if state.get("stage") != "qna":
         _stage("qna")
     ack = state.get("ack") or ""
-    content = (ack + "\n\n" if ack else "") + f"**[{spec.title}]** {gap['question']}"
+    content = (ack + "\n\n" if ack else "") + gap["question"]  # 장 이름은 메시지 meta 의 slot 으로 화면 태그에 표시되므로 본문 앞에 붙이지 않는다
     if gap.get("ask_for_document"):
         content += "\n\n📎 관련 자료(계약서·매뉴얼 등)가 있다면 파일로 올려 주셔도 됩니다."
     for g in gaps:
