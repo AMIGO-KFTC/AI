@@ -5,6 +5,7 @@
     agent.send_message(session_id, "업체 담당자는 …", kb)              # STAGE 3 답변 처리 → 확인/다음 질문
     agent.notify_files(session_id, kb, ["계약서.pdf"])               # 대화 중 추가 자료 → 재분석
     agent.finish(session_id, kb)                                    # 지금 바로 STAGE 4 문서 생성
+    agent.reopen_question(session_id, gap_id, kb)                   # 이미 답한 질문으로 돌아가 다시 묻기(STAGE 3)
     agent.snapshot(session_id)                                      # 단계·슬롯·공백·문서 상태 조회
 
 on_event 콜백은 진행 중 발생하는 이벤트를 즉시 받는다.
@@ -35,6 +36,7 @@ from .engine import Engine, make_engine
 from .graph import build_graph
 from .kb import KBAdapter
 from .nodes import AgentContext
+from .precedence import RANK_USER
 from .render import render_document
 from .state import open_gaps
 
@@ -106,6 +108,49 @@ class HandoverAgent:
 
     def skip(self, thread_id: str, kb: Any, on_event: EventHandler | None = None) -> TurnResult:
         return self._resume(thread_id, {"type": "skip"}, kb, on_event)
+
+    def reopen_question(self, thread_id: str, gap_id: str, kb: Any, on_event: EventHandler | None = None) -> TurnResult:
+        """이미 답했거나 건너뛴 질문으로 돌아가 그 질문을 다시 묻는다(질의응답 STAGE 3 에서만).
+
+        지금 묻고 있던 질문은 순서를 기다리도록 되돌리고, 다시 새로 답하면 앞의 답을 덮어쓴다(인계자 최신 답변이 우선: precedence.py).
+        체크포인트를 '다음 질문 고르기' 직후로 옮겨 ask 노드를 다시 돌리는 방식이라 다른 노드는 건드리지 않는다.
+        """
+        with self._lock(thread_id):
+            if not self._has_state(thread_id):
+                raise AgentStateError("아직 분석을 시작하지 않았습니다. 자료를 올리고 분석을 먼저 시작해 주세요.")
+            if not self.is_waiting(thread_id):
+                raise AgentStateError("이전 작업이 끝나지 않았습니다. 잠시 후 다시 시도하거나 '다시 시도'를 눌러 주세요.")
+            config = self._config(thread_id)
+            values = self.graph.get_state(config).values or {}
+            if values.get("stage") != "qna":
+                raise AgentStateError("질의응답 중에만 이전 질문으로 돌아갈 수 있습니다.")
+            gaps = copy.deepcopy(values.get("gaps") or [])
+            target = next((g for g in gaps if g.get("id") == gap_id), None)
+            if target is None:
+                raise AgentStateError("돌아갈 질문을 찾지 못했습니다.")
+            if target.get("status") not in ("answered", "resolved", "skipped"):
+                raise AgentStateError("아직 답하지 않은 질문이라 돌아갈 수 없습니다.")
+            for g in gaps:
+                if g.get("status") == "asked":
+                    g["status"] = "open"  # 지금 묻던 질문은 이 질문 다음에 다시 묻는다
+            slot = (values.get("slots") or {}).get(target.get("slot", "")) or {}
+            item = next((it for it in slot.get("items", []) if it.get("id") == target.get("item_id")), None)
+            overwrite = [k for k, meta in ((item or {}).get("field_meta") or {}).items() if meta.get("rank") == RANK_USER and str(((item or {}).get("fields") or {}).get(k, "")).strip()]
+            target.update(status="open", reopened=True, reopen_fields=overwrite)  # 새 답은 인계자가 앞서 적은 칸을 고치는 답으로 처리한다
+            target["rank"] = min((g.get("rank", 10_000) for g in gaps), default=10_000) - 1  # open_gaps 의 맨 앞으로
+            self.graph.update_state(
+                config,
+                {
+                    "gaps": gaps,
+                    "pending": {},
+                    "ack": "이전 질문으로 돌아왔어요. 새로 답해 주시면 앞의 답을 그 내용으로 고칠게요.",
+                    "question_count": sum(1 for g in gaps if g.get("status") in ("answered", "resolved", "skipped")),  # ask 가 +1 하므로 '지난 질문 수 + 1' 번이 된다
+                    "next_action": "ask",
+                    "last_intent": "reopen",
+                },
+                as_node="choose_next",
+            )
+            return self._run(thread_id, None, kb, on_event)
 
     def finish(self, thread_id: str, kb: Any, on_event: EventHandler | None = None) -> TurnResult:
         return self._resume(thread_id, {"type": "finish"}, kb, on_event)
