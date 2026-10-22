@@ -395,6 +395,9 @@ class OfflineEngine:
         if correcting and target is not None:
             keys = (data.pending or {}).get("keys", {}).get(target["id"]) or missing_fields(spec, target) or [spec.fields[1].key]
             fields = self._correction_fields(spec, text, keys)
+        elif gap and gap.get("reopened") and target is not None:  # 이미 답했던 질문을 다시 연 경우: 새 답이 앞서 적은 칸을 덮어쓴다
+            keys = gap.get("reopen_fields") or missing_fields(spec, target) or [spec.fields[1].key]
+            fields = self._correction_fields(spec, text, keys)
         else:
             fields = self._fields_from_answer(spec, text, target)
         title = item_label(spec, target) if target else short_title(text, 24)

@@ -308,6 +308,8 @@ def interpret_user(
             f"- id: {current_gap['id']}\n- 장: {SLOT_BY_KEY[current_gap['slot']].title} [{current_gap['slot']}]\n"
             f"- 관련 항목 id: {current_gap.get('item_id') or '(없음)'}\n- 질문: {current_gap.get('question', '')}"
         )
+        if current_gap.get("reopened"):
+            gap_text += "\n- (참고) 인계자가 이미 답했던 질문을 다시 열었습니다. 새 메시지는 앞의 답을 고치는 답변이므로, 기존 값과 다르면 새 값으로 updates 에 담으세요."
     else:
         gap_text = "(현재 질문 없음)"
     team = team_guidelines_block(profile.get("team_guidelines"))
