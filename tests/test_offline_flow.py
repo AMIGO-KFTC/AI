@@ -180,3 +180,29 @@ def test_scrub_credentials_keeps_descriptions():
     assert scrub_credentials("GA 비밀번호는 보안USB에 보관")[1] is False
     clean, found = scrub_credentials("ID는 admin, PW: p@ssw0rd 입니다")
     assert found and "p@ssw0rd" not in clean
+
+
+def test_file_upload_keeps_question_order(kb):
+    """대화 중 자료를 올려도 질문 순서가 처음으로 돌아가지 않고, 방금 물은 질문을 번호 증가 없이 다시 묻는다."""
+    from amigo_agent.state import open_gaps
+
+    agent = HandoverAgent()
+    agent.start("s4", PROFILE, kb)
+    agent.send_message("s4", "홈페이지 리뉴얼 건입니다", kb)
+    before = agent.send_message("s4", "네", kb)
+    asked = before.messages[-1]["content"]
+    order = [g["question"] for g in open_gaps(before.snapshot["gaps"])]
+    count = before.snapshot["question_count"]
+    kb.docs.append(
+        {
+            "chunk_id": "new2",
+            "text": "| 부서 | 담당자 | 프로젝트 | 협업 내용 |\n|---|---|---|---|\n| 정보보호팀 | 최영희 주임 | 홈페이지 리뉴얼 | 웹방화벽 정책 |",
+            "metadata": {"source_id": "new", "file_name": "연락망.xlsx", "source_type": "xlsx"},
+        }
+    )
+    after = agent.notify_files("s4", kb, ["연락망.xlsx"])
+    assert asked.split("\n\n")[-1] in after.messages[-1]["content"]  # 방금 물은 질문을 다시 묻는다
+    assert after.snapshot["question_count"] == count  # 같은 질문이라 번호는 그대로
+    remaining = [g["question"] for g in open_gaps(after.snapshot["gaps"])]
+    assert remaining == [q for q in order if q in remaining]  # 남은 질문의 순서가 그대로
+    assert all(g.get("rank") is not None for g in open_gaps(after.snapshot["gaps"]))

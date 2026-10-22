@@ -46,4 +46,29 @@ def rank_by_value(gaps: list[Gap], slots: dict[str, SlotState] | None = None) ->
     return [gaps[i] for i in order]
 
 
-__all__ = ["gap_score", "gap_weight", "rank_by_value"]
+def keep_order(previous: list[Gap], gaps: list[Gap], slots: dict[str, SlotState], first: Gap | None = None) -> bool:
+    """재분석으로 질문 목록이 다시 만들어져도 이미 정한 질문 순서(rank)를 유지한다(제자리 수정).
+
+    같은 슬롯·같은 문장의 질문은 이전 순서를 그대로 이어받고, 자료 때문에 새로 생긴 질문만 정보량 점수에 맞는 자리에 끼워 넣는다.
+    first 가 주어지고 그 질문이 아직 남아 있으면 맨 앞에 둔다(방금 물은 질문을 다시 묻기 위함). 맨 앞에 둔 경우 True.
+    """
+    ident = lambda g: (g.get("slot"), g.get("question"))  # noqa: E731
+    old_rank = {ident(g): g["rank"] for g in previous if g.get("status") in ("open", "asked") and g.get("rank") is not None}
+    ordered = sorted((g for g in gaps if ident(g) in old_rank and g.get("status") == "open"), key=lambda g: old_rank[ident(g)])
+    score = lambda g: gap_score(g, gap_weight(g, slots))  # noqa: E731
+    for gap in sorted((g for g in gaps if ident(g) not in old_rank and g.get("status") == "open"), key=lambda g: -score(g)):
+        index = next((i for i, other in enumerate(ordered) if score(other) < score(gap)), len(ordered))
+        ordered.insert(index, gap)
+    moved = False
+    if first is not None:
+        match = next((g for g in ordered if ident(g) == ident(first)), None)
+        if match is not None:
+            ordered.remove(match)
+            ordered.insert(0, match)
+            moved = True
+    for rank, gap in enumerate(ordered):
+        gap["rank"] = rank
+    return moved
+
+
+__all__ = ["gap_score", "gap_weight", "keep_order", "rank_by_value"]
