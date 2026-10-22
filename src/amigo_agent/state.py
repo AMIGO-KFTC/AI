@@ -253,7 +253,7 @@ def upsert_item(
     if title and spec.title_field not in clean:
         clean[spec.title_field] = title.strip()
     # 협의 상대는 제목이 부분적으로 겹쳐도('재무팀' ⊂ '재무팀 박지훈') 다른 사람일 수 있어 정확히 같을 때만 같은 항목으로 본다(같은 상대는 parties.py 가 합친다)
-    existing = find_item(items, item_id=item_id, title=title or clean.get(spec.title_field, ""), fuzzy=spec.key not in ("stakeholders", "leave_contacts"))
+    existing = find_item(items, item_id=item_id, title=title or clean.get(spec.title_field, ""), fuzzy=spec.key != "stakeholders")
     if existing is None:
         existing = {
             "id": new_id(spec.key),

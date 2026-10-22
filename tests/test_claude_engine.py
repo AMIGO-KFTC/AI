@@ -215,3 +215,16 @@ def test_default_model_is_sonnet_and_sends_effort(kb, monkeypatch):
     call = client.messages.calls[0]
     assert call["model"] == "claude-sonnet-5-5"
     assert call["output_config"].get("effort") == "medium"
+
+
+def test_analysis_prompt_asks_for_reference_documents():
+    """참고자료 필드는 자료에서 찾은 문서명으로 채우되, 없으면 짐작하지 않고 비운다고 안내한다."""
+    assert "'references'(참고자료)" in ANALYSIS_SYSTEM
+    assert "짐작해서 쓰지 말고 빈 문자열" in ANALYSIS_SYSTEM
+
+
+def test_reference_field_value_reaches_document(kb):
+    agent = HandoverAgent(AgentConfig(llm_mode="claude", model="claude-opus-5-5", max_concurrency=1), client=FakeClient())
+    agent.start("c2", PROFILE, kb)
+    doc = agent.finish("c2", kb).snapshot["document"]
+    assert "| 참고자료 및 관련 근거 | 참고자료 및 관련 근거 값 1 |" in doc

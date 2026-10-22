@@ -34,10 +34,11 @@ def test_full_flow_stage_1_to_4(kb):
     assert result.snapshot["pending"]["refs"]
     assert kb.added and "CD공동망 고도화" in kb.added[-1]  # 답변이 지식베이스에도 반영된다
 
-    # 확인 → 다음 질문(ack 포함): 시스템 접근 권한의 신청·이관 방법
+    # 확인 → 다음 질문(이전 답변을 다시 정리하는 문구 없이 질문만): 시스템 접근 권한의 신청·이관 방법
     result = agent.send_message("s1", "네", kb)
     assert kinds(result) == ["question"]
-    assert result.messages[0]["content"].startswith("확인했습니다.")
+    assert not result.messages[0]["content"].startswith(("**[", "["))  # 장 이름은 본문이 아니라 meta.slot 으로 알린다
+    assert "확인했습니다" not in result.messages[0]["content"]
     assert result.snapshot["question_count"] == 2
     assert result.messages[0]["meta"]["slot"] == "systems"
     agent.send_message("s1", "신청은 내선 2345 로 연락합니다", kb)
@@ -179,3 +180,29 @@ def test_scrub_credentials_keeps_descriptions():
     assert scrub_credentials("GA 비밀번호는 보안USB에 보관")[1] is False
     clean, found = scrub_credentials("ID는 admin, PW: p@ssw0rd 입니다")
     assert found and "p@ssw0rd" not in clean
+
+
+def test_file_upload_keeps_question_order(kb):
+    """대화 중 자료를 올려도 질문 순서가 처음으로 돌아가지 않고, 방금 물은 질문을 번호 증가 없이 다시 묻는다."""
+    from amigo_agent.state import open_gaps
+
+    agent = HandoverAgent()
+    agent.start("s4", PROFILE, kb)
+    agent.send_message("s4", "홈페이지 리뉴얼 건입니다", kb)
+    before = agent.send_message("s4", "네", kb)
+    asked = before.messages[-1]["content"]
+    order = [g["question"] for g in open_gaps(before.snapshot["gaps"])]
+    count = before.snapshot["question_count"]
+    kb.docs.append(
+        {
+            "chunk_id": "new2",
+            "text": "| 부서 | 담당자 | 프로젝트 | 협업 내용 |\n|---|---|---|---|\n| 정보보호팀 | 최영희 주임 | 홈페이지 리뉴얼 | 웹방화벽 정책 |",
+            "metadata": {"source_id": "new", "file_name": "연락망.xlsx", "source_type": "xlsx"},
+        }
+    )
+    after = agent.notify_files("s4", kb, ["연락망.xlsx"])
+    assert asked.split("\n\n")[-1] in after.messages[-1]["content"]  # 방금 물은 질문을 다시 묻는다
+    assert after.snapshot["question_count"] == count  # 같은 질문이라 번호는 그대로
+    remaining = [g["question"] for g in open_gaps(after.snapshot["gaps"])]
+    assert remaining == [q for q in order if q in remaining]  # 남은 질문의 순서가 그대로
+    assert all(g.get("rank") is not None for g in open_gaps(after.snapshot["gaps"]))

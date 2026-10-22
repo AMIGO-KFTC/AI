@@ -22,7 +22,7 @@ def test_quick_reply_confirm_moves_to_next_question(kb):
 
     result = agent.send_message("c1", "네, 맞아요", kb)  # 화면의 빠른 답변 단추 문구 그대로
     assert [m["kind"] for m in result.messages] == ["question"]
-    assert result.messages[0]["content"].startswith("확인했습니다.")
+    assert result.messages[0]["content"] == next(g for g in result.snapshot["gaps"] if g["id"] == result.snapshot["current_gap_id"])["question"]  # 이전 답변 정리·장 이름 대괄호 없이 질문만
     snap = result.snapshot
     assert not snap["pending"] and snap["current_gap_id"] != gap_id
     assert next(g for g in snap["gaps"] if g["id"] == gap_id)["status"] == "resolved"

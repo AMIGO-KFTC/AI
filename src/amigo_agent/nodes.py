@@ -27,7 +27,7 @@ from .engine import Engine, Interpretation, InterpretInput, SlotResult
 from .engine.offline import OfflineEngine
 from .kb import KBAdapter
 from .parties import consolidate_parties, remap_ids
-from .questions import rank_by_value
+from .questions import keep_order, rank_by_value
 from .llm import LLMError, LLMOutputError
 from .precedence import RANK_USER, now_ts
 from .render import render_document, unlinked_children
@@ -248,7 +248,7 @@ def resolve_conflicts(state: AgentState, runtime: Runtime[AgentContext]) -> dict
     return update
 
 
-PARTY_SLOTS = ("stakeholders", "leave_contacts")
+PARTY_SLOTS = ("stakeholders",)
 
 
 def merge_same_parties(slots: dict[str, Any], gaps: list[Any]) -> list[str]:
@@ -331,7 +331,7 @@ def ask(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     if state.get("stage") != "qna":
         _stage("qna")
     ack = state.get("ack") or ""
-    content = (ack + "\n\n" if ack else "") + f"**[{spec.title}]** {gap['question']}"
+    content = (ack + "\n\n" if ack else "") + gap["question"]  # 장 이름은 메시지 meta 의 slot 으로 화면 태그에 표시되므로 본문 앞에 붙이지 않는다
     if gap.get("ask_for_document"):
         content += "\n\n📎 관련 자료(계약서·매뉴얼 등)가 있다면 파일로 올려 주셔도 됩니다."
     for g in gaps:
@@ -450,7 +450,8 @@ def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
         for g in gaps:
             if g["id"] in resolved and g.get("status") in ("asked", "answered", "open"):
                 g["status"] = "resolved"
-        out.update(gaps=gaps, slots=slots, pending={}, ack=result.reply if result.reply and len(result.reply) < 60 else "확인했습니다.")
+        # 직전 확인 메시지에서 이미 정리해 보여 줬으므로, 다음 질문 앞에 다시 정리·확인 문구를 붙이지 않는다.
+        out.update(gaps=gaps, slots=slots, pending={}, ack="")
         out["last_intent"] = "confirm"
         return out
 
@@ -543,6 +544,7 @@ def reanalyze(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
     _progress(f"새 자료 {len(names)}건을 분석에 반영하고 있어요.", status="running")
     slots = copy.deepcopy(state.get("slots") or {})
     gaps = copy.deepcopy(state.get("gaps") or [])
+    previous = copy.deepcopy(gaps)
     targets = [s.key for s in slots_for(state.get("profile"))]  # 새 자료는 어느 장에든 정보를 더할 수 있으므로 전체를 다시 본다
 
     with ThreadPoolExecutor(max_workers=max(1, ctx.config.max_concurrency)) as pool:
@@ -579,9 +581,11 @@ def reanalyze(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
         fresh = [g for g in results[key].gaps if g.get("question") not in seen]
         gaps = kept + fresh
 
+    asked = next((g for g in previous if g["id"] == state.get("current_gap_id") and g.get("status") == "asked"), None)
     for g in gaps:  # 답을 기다리던 질문은 새 분석 결과와 함께 다시 고른다
         if g.get("status") == "asked":
             g["status"] = "open"
+    reasked = keep_order(previous, gaps, slots, first=asked)  # 질문 순서는 그대로 두고, 방금 물은 질문을 먼저 다시 묻는다
     sources = ctx.kb.list_sources() or state.get("sources", [])
     summary = f"새 자료({', '.join(names[:3])}{' 외' if len(names) > 3 else ''})를 반영했어요."
     summary += f" 추가로 찾은 내용: {', '.join(changes)}." if changes else " 기존 분석에 더할 새 정보는 찾지 못했어요."
@@ -593,6 +597,8 @@ def reanalyze(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
         out["transcript"] = [user, _say("info", summary + " 직전에 정리한 내용이 맞는지 먼저 확인해 주세요.", quick_replies=QUICK_REPLIES_CONFIRM)]
     else:
         out.update(ack=summary, current_gap_id="", transcript=[user])
+        if reasked:  # 같은 질문을 다시 묻는 것이라 질문 번호를 올리지 않는다
+            out["question_count"] = max(0, int(state.get("question_count") or 0) - 1)
     return out
 
 

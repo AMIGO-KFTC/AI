@@ -15,9 +15,8 @@ B_LABELS = ["업무 개요", "주요 일정 및 처리사항", "업무 처리방
 def _leave_slots():
     slots = empty_slots([s.key for s in slots_for(LEAVE)])
     for name in ("웹서비스 운영", "월간 보고"):
-        upsert_item(slots["leave_tasks"], item_id="", title=name, fields={"name": name, "overview": "개요"}, citations=[], origin="document")
-    for party, task in (("재무팀 박지훈 차장", "월간 보고"), ("(주)한빛웹솔루션", "긴급 상황 대응"), ("김미고 팀장", "")):
-        upsert_item(slots["leave_contacts"], item_id="", title=party, fields={"party": party, "task": task, "discussed": f"{party} 대응"}, citations=[], origin="document")
+        emergency = "재무팀 박지훈 차장에게 문의" if name == "월간 보고" else ""
+        upsert_item(slots["leave_tasks"], item_id="", title=name, fields={"name": name, "overview": "개요", "emergency": emergency}, citations=[], origin="document")
     return slots
 
 
@@ -25,21 +24,13 @@ def _render(slots, gaps=()):
     return render_document(profile=LEAVE, slots=slots, gaps=list(gaps), sources=[], version=1)
 
 
-def test_leave_document_has_only_template_b_cards_and_no_stand_alone_contact_table():
+def test_leave_document_has_the_seven_template_b_items_in_order():
     md = _render(_leave_slots())
-    assert "연결되는" not in md and "| 담당자 | 세부 업무명 | 대응·협조 내용 | 추후 고려사항 |" not in md  # 양식에 없는 '세부 업무명' 열이 있는 표가 없다
-    first_card = html_tables(md)[1]  # 0번은 월별 일정표
-    labels = [texts(r)[0] for r in first_card if r and r[0]["tag"] == "th"]
+    assert "연결되는" not in md and "| 담당자 | 세부 업무명 | 대응·협조 내용 | 추후 고려사항 |" not in md  # 양식에 없는 별도 표가 없다
+    card = md[md.index("### 1)"):md.index("### 2)")]
+    labels = [line.split("|")[1].strip() for line in card.splitlines() if line.startswith("| ")]
     assert [l for l in labels if l in B_LABELS] == B_LABELS  # B. 세부 업무의 7개 항목이 정해진 순서로
-    assert "재무팀 박지훈 차장" in md  # 맞는 세부 업무의 카드 안에는 들어간다
-
-
-def test_unlinked_contacts_are_listed_in_the_to_confirm_section_with_their_content():
-    slots = _leave_slots()
-    assert [it["title"] for _, it in unlinked_children(slots, slots_for(LEAVE))] == ["(주)한빛웹솔루션", "김미고 팀장"]
-    tail = _render(slots)[_render(slots).index("확인 필요 사항"):]
-    assert "'(주)한빛웹솔루션'의 비상 대응 및 협조사항이(가) 어느 세부 업무명에 해당하는지 확인이 필요합니다 (입력된 세부 업무명: '긴급 상황 대응', 대응·협조 내용: (주)한빛웹솔루션 대응)" in tail
-    assert "'김미고 팀장'의 비상 대응 및 협조사항이(가) 어느 세부 업무명에 해당하는지 확인이 필요합니다 (대응·협조 내용: 김미고 팀장 대응)" in tail
+    assert "재무팀 박지훈 차장에게 문의" in md  # 비상 대응 및 협조사항은 세부 업무 카드의 한 칸이다
 
 
 DOCS = [
@@ -86,8 +77,4 @@ def test_children_are_analyzed_after_parents_and_get_the_parent_names(monkeypatc
     assert seen.get("stakeholders") == ["홈페이지 리뉴얼"]  # 자료에서 찾은 프로젝트 이름이 이미 있다
 
     slots = _leave_slots()
-    block = link_names_block(slots, SLOT_BY_KEY["leave_contacts"])
-    assert "- 웹서비스 운영" in block and "- 월간 보고" in block and "글자 그대로" in block
-    assert "아직 없음" in link_names_block(empty_slots(["leave_tasks"]), SLOT_BY_KEY["leave_contacts"])
-    assert link_names_block(slots, SLOT_BY_KEY["leave_tasks"]) == ""
-    assert "웹서비스 운영" in analysis_user(SLOT_BY_KEY["leave_contacts"], {**LEAVE, "_link_slots": slots}, "근거", 2)
+    assert link_names_block(slots, SLOT_BY_KEY["leave_tasks"]) == ""  # 세부 업무는 다른 장에 붙지 않는다
