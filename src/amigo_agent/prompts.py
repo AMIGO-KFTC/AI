@@ -7,7 +7,7 @@ from typing import Any
 from .links import link_names_block
 from .dept_info import clean_dept_info, has_info, targets as dept_targets
 from .state import Gap, SlotState, Turn
-from .template import COVERAGE_LABELS, MODE_LABELS, SLOT_BY_KEY, SLOTS, SlotSpec, mode_of
+from .template import COVERAGE_LABELS, MODE_LABELS, SLOT_BY_KEY, SLOTS, SlotSpec, leave_period, mode_of
 
 ANALYSIS_SYSTEM = """\
 당신은 공공·금융기관의 업무 인수인계서 작성을 돕는 분석가입니다. 인계자가 올린 업무 자료(문서·메일·링크)를 근거로 인수인계서의 한 장(章)을 채웁니다.
@@ -75,6 +75,7 @@ def profile_block(profile: dict[str, Any]) -> str:
         ("인계 유형", MODE_LABELS[mode_of(profile)]),
         ("담당 업무(인계자 입력)", profile.get("duties")),
         ("인수자", profile.get("successor")),
+        ("휴가 기간", leave_period(profile)),
         ("인계 예정일", profile.get("handover_date")),
     ]
     return "\n".join(f"- {k}: {v}" for k, v in rows if v)

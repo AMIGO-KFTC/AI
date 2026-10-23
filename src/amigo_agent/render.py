@@ -12,7 +12,7 @@ from typing import Any
 
 from .periods import plan_months
 from .state import Gap, SlotState, item_label, normalize_title
-from .template import MODE_LABELS, SLOT_BY_KEY, SlotSpec, mode_of, slots_for
+from .template import MODE_LABELS, SLOT_BY_KEY, SlotSpec, leave_period, mode_of, slots_for
 
 STATUS_LABEL = {"open": "미질문", "asked": "답변 대기", "answered": "확인 대기", "skipped": "인계자 미확인"}
 
@@ -194,6 +194,7 @@ def render_document(
         ("인계자", giver),
         ("소속", profile.get("organization")),
         ("인수자", profile.get("successor")),
+        ("휴가 기간", leave_period(profile)),
         ("인계 일자", profile.get("handover_date")),
         ("인계 유형", MODE_LABELS[mode_of(profile)]),
         ("단위 업무명", profile.get("task_name")),
