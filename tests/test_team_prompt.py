@@ -15,8 +15,7 @@ def test_team_prompt_reaches_every_question_related_prompt():
     assert "질문(gaps)에도 적용" in analysis_user(SLOT_BY_KEY["regular"], WITH_PROMPT, "근거", 2)
     chat = interpret_user(profile=WITH_PROMPT, stage="qna", current_gap=None, pending_text="", slots={}, open_gaps=[], transcript=[], message="네")
     assert PROMPT in chat
-    plan = plan_user(WITH_PROMPT, [])
-    assert PROMPT in plan and "순서" not in team_prompt_block(None)  # 순서 정하기에도 전달
+    assert PROMPT not in plan_user(WITH_PROMPT, [])  # 질문 순서는 양식의 장 순서로 정해지므로 중복 찾기에는 팀 프롬프트를 주지 않는다
     assert PROMPT in summary_user(WITH_PROMPT, {}, [])
 
 

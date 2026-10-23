@@ -19,7 +19,8 @@ def answered_first_question(kb):
     return agent, first["meta"]["gap_id"], second["meta"]["gap_id"]
 
 
-def test_reopen_asks_the_earlier_question_again_and_overwrites_the_answer(kb):
+def test_reopen_asks_the_earlier_question_again_and_overwrites_the_answer(kb_ordered):
+    kb = kb_ordered
     agent, first_id, second_id = answered_first_question(kb)
 
     result = agent.reopen_question("s1", first_id, kb)
@@ -44,7 +45,8 @@ def test_reopen_asks_the_earlier_question_again_and_overwrites_the_answer(kb):
     assert result.snapshot["question_count"] == 2
 
 
-def test_reopen_works_for_a_skipped_question(kb):
+def test_reopen_works_for_a_skipped_question(kb_ordered):
+    kb = kb_ordered
     agent = HandoverAgent()
     first = agent.start("s1", PROFILE, kb).messages[-1]["meta"]["gap_id"]
     result = agent.skip("s1", kb)
@@ -53,7 +55,8 @@ def test_reopen_works_for_a_skipped_question(kb):
     assert result.messages[-1]["meta"]["gap_id"] == first
 
 
-def test_reopen_rejects_questions_that_are_not_answered_yet(kb):
+def test_reopen_rejects_questions_that_are_not_answered_yet(kb_ordered):
+    kb = kb_ordered
     agent, first_id, second_id = answered_first_question(kb)
     with pytest.raises(AgentStateError, match="아직 답하지 않은"):
         agent.reopen_question("s1", second_id, kb)  # 지금 묻고 있는 질문
@@ -61,7 +64,8 @@ def test_reopen_rejects_questions_that_are_not_answered_yet(kb):
         agent.reopen_question("s1", "no-such-gap", kb)
 
 
-def test_reopen_is_only_for_the_qna_stage(kb):
+def test_reopen_is_only_for_the_qna_stage(kb_ordered):
+    kb = kb_ordered
     agent, first_id, _ = answered_first_question(kb)
     agent.finish("s1", kb)  # 문서 생성 → review 단계
     with pytest.raises(AgentStateError, match="질의응답 중에만"):

@@ -9,7 +9,8 @@ def kinds(result):
     return [m["kind"] for m in result.messages]
 
 
-def test_full_flow_stage_1_to_4(kb):
+def test_full_flow_stage_1_to_4(kb_ordered):
+    kb = kb_ordered
     agent = HandoverAgent()
     seen = []
     result = agent.start("s1", PROFILE, kb, on_event=seen.append)
@@ -70,7 +71,8 @@ def test_full_flow_stage_1_to_4(kb):
     assert result.snapshot["document_version"] == version + 1
 
 
-def test_correction_overwrites_last_recorded_fields(kb):
+def test_correction_overwrites_last_recorded_fields(kb_ordered):
+    kb = kb_ordered
     agent = HandoverAgent()
     agent.start("s2", PROFILE, kb)
     # 첫 질문은 협업관계의 '프로젝트명'
@@ -85,7 +87,8 @@ def test_correction_overwrites_last_recorded_fields(kb):
     assert finance["confirmed"] is True
 
 
-def test_repeated_corrections_stop_after_two_rounds(kb):
+def test_repeated_corrections_stop_after_two_rounds(kb_ordered):
+    kb = kb_ordered
     """정리 확인 → 고친 내용 확인 다음의 고침은 더 묻지 않고 반영한 뒤 다음 질문으로 넘어간다(무한 반복 방지)."""
     agent = HandoverAgent()
     agent.start("s5", PROFILE, kb)
@@ -101,7 +104,8 @@ def test_repeated_corrections_stop_after_two_rounds(kb):
     assert "웹 접근성 개선" in finance["fields"]["project"]
 
 
-def test_files_trigger_reanalysis_and_keep_user_answers(kb):
+def test_files_trigger_reanalysis_and_keep_user_answers(kb_ordered):
+    kb = kb_ordered
     agent = HandoverAgent()
     agent.start("s3", PROFILE, kb)
     agent.send_message("s3", "홈페이지 리뉴얼 건입니다", kb)
@@ -206,3 +210,17 @@ def test_file_upload_keeps_question_order(kb):
     remaining = [g["question"] for g in open_gaps(after.snapshot["gaps"])]
     assert remaining == [q for q in order if q in remaining]  # 남은 질문의 순서가 그대로
     assert all(g.get("rank") is not None for g in open_gaps(after.snapshot["gaps"]))
+
+
+def test_questions_are_asked_in_template_slot_order(kb):
+    """정보량·우선순위와 상관없이 인수인계서 양식의 장 순서(개요 → 정기 → 비정기 → 협업 → 시스템 → 부서)대로 묻는다."""
+    from amigo_agent.template import SLOT_KEYS
+
+    agent = HandoverAgent()
+    snap = agent.start("order", PROFILE, kb).snapshot
+    asked = []
+    while snap["stage"] == "qna" and snap["waiting"]:
+        asked.append(next(g["slot"] for g in snap["gaps"] if g["id"] == snap["current_gap_id"]))
+        snap = agent.skip("order", kb).snapshot
+    assert asked and asked == sorted(asked, key=SLOT_KEYS.index)
+    assert asked[0] == "regular" and "stakeholders" in asked and asked.index("stakeholders") < asked.index("systems") < asked.index("dept_notes")

@@ -446,7 +446,7 @@ graph TD
 |---|---|---|
 | STAGE 1 분석 | `prepare` → `analyze_slot` ×6 → `resolve_conflicts` → `collect_gaps` | 슬롯(장)별로 근거를 검색하고, 모자라면 모델이 `search_documents` 를 스스로 호출해 연결 정보를 추가 탐색(Agentic RAG). 항목·충족 수준·공백(gap) 도출. 같은 필드에 다른 값이 모이면 `resolve_conflicts` 가 우선순위로 확정 |
 | STAGE 2 요약 | `summarize` | 장별 충족 현황(🟢충분/🟡부분/🔴부족)과 안내문 |
-| STAGE 3 Q&A | `choose_next` → `ask` → `wait_user`(interrupt) → `interpret` → `resolve_answer` | 공백을 우선순위대로 **하나씩** 질문 → 답변 해석·항목 갱신 → 문서 값과 다르면 인계자 답변으로 확정(`resolve_answer`) → **교차 확인**("이렇게 정리했는데 맞나요?") → 다음 질문. 건너뛰기·되묻기·정정 처리, 대화 중 파일 추가 시 `reanalyze` → `resolve_reanalysis` 로 재분석·충돌 확정 |
+| STAGE 3 Q&A | `choose_next` → `ask` → `wait_user`(interrupt) → `interpret` → `resolve_answer` | 공백을 인수인계서 양식의 장 순서대로(`questions.rank_by_slot_order`) **하나씩** 질문 → 답변 해석·항목 갱신 → 문서 값과 다르면 인계자 답변으로 확정(`resolve_answer`) → **교차 확인**("이렇게 정리했는데 맞나요?") → 다음 질문. 건너뛰기·되묻기·정정 처리, 대화 중 파일 추가 시 `reanalyze` → `resolve_reanalysis` 로 재분석·충돌 확정 |
 | STAGE 4 생성 | `compose` | 노션 템플릿의 장 구성대로 표·항목 값·근거 번호를 코드가 직접 Markdown 인수인계서로 작성(모델 호출 없음). 이후 검토 의견을 받아 버전업 |
 
 `wait_user` 노드가 LangGraph `interrupt()` 로 사람 입력을 기다리고, 체크포인터에 상태가 저장되므로
@@ -569,7 +569,7 @@ agent.snapshot(session_id)  # {"stage","waiting","slots","gaps","pending","docum
 |---|---|
 | 계획기간 해석(`periods.py`) | 정확도, 못 읽은 수(미탐), 틀리게 읽은 수, 읽으면 안 되는 표현에서 달을 지어낸 수(오탐) |
 | 협의 상대 묶기(`parties.py`) | 같은 사람·팀의 여러 표기가 하나로 묶였는지(쌍 단위 재현율·정밀도·F1), 잘못 합친 쌍 수 |
-| 질문 효율(`plan_questions`·`choose_next`) | 질문 수, 질문당 채우는 정보(부족한 필수 항목 수), 5번째 질문까지 채운 비율, 질문 순서 점수(AUC) |
+| 질문 효율(`plan_questions`·`choose_next`) | 질문 수, 질문당 채우는 정보(부족한 필수 항목 수), 5번째 질문까지 채운 비율, 질문 순서 점수(AUC). 질문 순서는 정보량이 아니라 양식의 장 순서로 정해지므로 이 지표는 참고용 |
 
 Claude 엔진은 API 호출이 필요해 이 측정에 포함하지 않았다(규칙 엔진과 같은 정답 데이터로 따로 재야 한다).
 
@@ -582,7 +582,7 @@ Claude 엔진은 API 호출이 필요해 이 측정에 포함하지 않았다(�
 |---|---|
 | 자료 검색 | '부서별 추가 자료' 장은 대상(업체·가맹점·문서) 이름을 검색어에 더해 근거를 찾음 |
 | 장별 분석 | 부서별 추가 자료 장: 대상마다 자료에서 관리 내용(담당자·계약·갱신·점검 주기)을 찾아 항목으로 정리하고, 없으면 관리 방식을 묻는 질문(gaps) 생성. 이미 아는 위치·업체명은 묻지 않음. 다른 장: 관련 있는 정보만 참고, 협업 장은 협업 부서 정보도 참고 |
-| 질문 순서 | 이 대상들의 질문을 가볍게 보지 않고 같은 대상 질문은 중복으로 봄 |
+| 질문 순서 | 같은 대상 질문은 중복으로 봄(순서는 양식의 장 순서가 정함) |
 | 대화 | 답변을 대상 이름의 '부서별 추가 자료' 항목으로 정리하고 해당 질문을 해소 |
 
 규칙 엔진은 자료에 대상 이름이 나오면 그 문장을 항목으로, 없으면 관리 방식 질문(`note_topic` 표시)을 라이센스 → 가맹점 → 문서 순으로 번갈아 최대 3개 만듭니다.
@@ -594,7 +594,6 @@ Claude 엔진은 API 호출이 필요해 이 측정에 포함하지 않았다(�
 | 단계 | 반영 |
 |---|---|
 | 장별 분석(질문 후보 gaps 생성) | `team_guidelines_block`: 질문의 우선순위·관점·표현·꼭 확인할 사항에도 적용 |
-| 질문 순서 정하기 | `plan_user`: `team_prompt_block` |
 | 자료 분석 안내문 | `summary_user`: `team_prompt_block` |
 | 대화(답변 해석) | `interpret_user`: `team_guidelines_block` |
 | 분석 뒤에 고친 경우 | `HandoverAgent.update_profile` 로 다음 턴부터 반영(값이 None 이면 지움) |
