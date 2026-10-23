@@ -246,6 +246,17 @@ def mode_of(profile: dict[str, Any] | None) -> str:
     return MODE_LEAVE if mode == MODE_LEAVE else MODE_REASSIGNMENT
 
 
+def leave_period(profile: dict[str, Any] | None) -> str:
+    """장기휴가의 휴가 기간 문구("2026-11-02 ~ 2026-11-27"). 장기휴가가 아니거나 날짜가 없으면 빈 문자열."""
+    if mode_of(profile) != MODE_LEAVE:
+        return ""
+    start = str((profile or {}).get("leave_start") or "").strip()
+    end = str((profile or {}).get("leave_end") or "").strip()
+    if start and end:
+        return f"{start} ~ {end}"
+    return start or end
+
+
 def slots_for(profile: dict[str, Any] | None) -> tuple[SlotSpec, ...]:
     """이번 인수인계서에 쓰는 슬롯(버전별로 장 구성이 다르다)."""
     mode = mode_of(profile)

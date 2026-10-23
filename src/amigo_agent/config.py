@@ -29,6 +29,8 @@ class AgentConfig:
     # auto: Anthropic 자격증명이 있으면 Claude, 없으면 규칙 기반 오프라인 엔진
     llm_mode: str = field(default_factory=lambda: os.getenv("AMIGO_LLM_MODE", "auto").lower())
     model: str = field(default_factory=lambda: os.getenv("AMIGO_LLM_MODEL", DEFAULT_MODEL))
+    # 스크린샷(PNG·JPG) 속 글자를 읽을 때 쓰는 모델. 따로 정하지 않으면 AMIGO_LLM_MODEL 과 같은 모델을 쓴다.
+    vision_model: str = field(default_factory=lambda: os.getenv("AMIGO_VISION_MODEL") or os.getenv("AMIGO_LLM_MODEL", DEFAULT_MODEL))
     # Claude Opus 5.5 는 thinking 을 끌 수 없고 effort 로 깊이를 조절한다(기본 medium).
     effort_analysis: str = field(default_factory=lambda: os.getenv("AMIGO_EFFORT_ANALYSIS", "medium"))
     effort_chat: str = field(default_factory=lambda: os.getenv("AMIGO_EFFORT_CHAT", "low"))
