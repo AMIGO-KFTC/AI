@@ -166,7 +166,6 @@ class OfflineEngine:
                     "description": f"{target['label']} '{name}'의 관리 내용이 자료에서 확인되지 않음",
                     "question": target["question"],
                     "priority": 2,
-                    "weight": len(spec.required),
                     "note_topic": name,
                     "ask_for_document": False,
                     "status": "open",
@@ -307,7 +306,6 @@ class OfflineEngine:
                     "description": f"자료에서 {spec.title} 정보를 찾지 못함",
                     "question": spec.default_question,
                     "priority": priority,
-                    "weight": len(spec.required) * spec.min_items,  # 이 질문이 채워 줄 부족한 필수 항목 수
                     "ask_for_document": spec.key in ("systems", "stakeholders"),
                     "status": "open",
                 }
@@ -327,7 +325,6 @@ class OfflineEngine:
                     "description": f"'{label}'의 {names} 정보 없음",
                     "question": f"자료에 있는 '{label}' 관련해서 {josa(names, '을/를')} 알려 주시겠어요?",
                     "priority": priority,
-                    "weight": len(missing),
                     "ask_for_document": False,
                     "status": "open",
                 }
@@ -452,7 +449,7 @@ class OfflineEngine:
         return fields
 
     def plan_questions(self, profile, gaps) -> tuple[list[str], set[str]]:
-        """순서는 collect_gaps 의 후처리(questions.rank_by_value)가 정한다. 규칙 엔진은 그대로 둔다."""
+        """순서는 collect_gaps 의 후처리(questions.rank_by_slot_order)가 정한다. 규칙 엔진은 그대로 둔다."""
         return [g["id"] for g in gaps], set()
 
 

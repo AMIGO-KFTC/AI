@@ -27,7 +27,7 @@ from .engine import Engine, Interpretation, InterpretInput, SlotResult
 from .engine.offline import OfflineEngine
 from .kb import KBAdapter
 from .parties import consolidate_parties, remap_ids
-from .questions import keep_order, rank_by_value
+from .questions import keep_order, rank_by_slot_order
 from .llm import LLMError, LLMOutputError
 from .precedence import RANK_USER, now_ts
 from .render import render_document, unlinked_children
@@ -196,7 +196,6 @@ def _link_gaps(slots: dict[str, Any], active: list[Any], gaps: list[Gap]) -> lis
                 "description": f"'{who}'의 {child.embed_label}이(가) 어느 {parent.label(parent.title_field)}에 해당하는지 모름",
                 "question": f"'{who}'의 {child.embed_label}{f'({body})' if body else ''}은(는) 어느 {parent.label(parent.title_field)}에 해당하나요?{choices}",
                 "priority": 1,
-                "weight": 1,
                 "link_field": child.embed_link,
                 "ask_for_document": False,
                 "status": "open",
@@ -212,7 +211,7 @@ def collect_gaps(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str,
         gaps.extend(copy.deepcopy((state.get("slots") or {}).get(key, {}).get("proposed_gaps", [])))
     gaps.extend(_link_gaps(state.get("slots") or {}, active, gaps))  # 어느 프로젝트·세부 업무인지 맞출 수 없는 항목은 묻는다
     ordered = open_gaps(gaps)
-    try:  # 장마다 따로 만든 질문 후보에서 중복을 빼고 전체 순서를 정한다
+    try:  # 장마다 따로 만든 질문 후보에서 중복을 뺀다(순서는 아래에서 양식의 장 순서로 정한다)
         order, drops = runtime.context.engine.plan_questions(state.get("profile", {}), ordered)
     except LLMError as exc:
         logger.warning("question planning failed, keep slot order: %s", exc)
@@ -222,7 +221,7 @@ def collect_gaps(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str,
     for g in planned:
         if g["id"] in ranks:
             g["rank"] = ranks[g["id"]]
-    rank_by_value(planned, state.get("slots") or {})  # 엔진이 정한 순서 위에 정보량 기준 후처리(Claude 도 같은 순서가 되게)
+    rank_by_slot_order(planned)  # 엔진이 정한 순서 위에 양식의 장 순서로 후처리(규칙 엔진·Claude 모두 같은 순서가 되게)
     _progress("자료 분석을 마쳤어요.", current=len(active), total=len(active))
     return {"gaps": open_gaps(planned)}
 
@@ -585,7 +584,7 @@ def reanalyze(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
     for g in gaps:  # 답을 기다리던 질문은 새 분석 결과와 함께 다시 고른다
         if g.get("status") == "asked":
             g["status"] = "open"
-    reasked = keep_order(previous, gaps, slots, first=asked)  # 질문 순서는 그대로 두고, 방금 물은 질문을 먼저 다시 묻는다
+    reasked = keep_order(previous, gaps, first=asked)  # 질문 순서는 그대로 두고, 방금 물은 질문을 먼저 다시 묻는다
     sources = ctx.kb.list_sources() or state.get("sources", [])
     summary = f"새 자료({', '.join(names[:3])}{' 외' if len(names) > 3 else ''})를 반영했어요."
     summary += f" 추가로 찾은 내용: {', '.join(changes)}." if changes else " 기존 분석에 더할 새 정보는 찾지 못했어요."

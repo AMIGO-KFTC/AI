@@ -102,7 +102,6 @@ class DuplicatePair(BaseModel):
 class PlanOutput(BaseModel):
     model_config = _STRICT
     duplicates: list[DuplicatePair]
-    order: list[str]
 
 
 class SummaryOutput(BaseModel):
@@ -204,7 +203,7 @@ class ClaudeEngine:
         return SlotResult(slot=slot, gaps=gaps)
 
     def plan_questions(self, profile: dict[str, Any], gaps: list[Gap]) -> tuple[list[str], set[str]]:
-        """장별 질문 후보의 중복을 없애고 전체 우선순위를 정한다 → (물을 순서, 뺄 질문 id)."""
+        """장별 질문 후보의 중복을 찾는다 → (남은 질문 id, 뺄 질문 id). 묻는 순서는 모델이 아니라 코드가 양식의 장 순서로 정한다(questions.rank_by_slot_order)."""
         if len(gaps) < 2:
             return [g["id"] for g in gaps], set()
         output = self.llm.structured(
@@ -216,8 +215,7 @@ class ClaudeEngine:
         )
         known = {g["id"] for g in gaps}
         drops = {d.drop_id for d in output.duplicates if d.drop_id in known and d.keep_id in known and d.drop_id != d.keep_id}
-        order = [gid for gid in dict.fromkeys(output.order) if gid in known and gid not in drops]
-        return order, drops
+        return [g["id"] for g in gaps if g["id"] not in drops], drops
 
     # ------------------------------------------------------------------ STAGE 2
     def summarize(self, profile, slots, gaps, sources) -> str:

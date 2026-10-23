@@ -49,7 +49,7 @@ def test_chat_and_plan_prompts():
     chat = interpret_user(profile=WITH_INFO, stage="qna", current_gap=None, pending_text="", slots={}, open_gaps=[], transcript=[], message="네")
     assert "한울 제휴몰" in chat and "updates" in chat
     plan = plan_user(WITH_INFO, [])
-    assert "한울 제휴몰" in plan and "가볍게 보지 않습니다" in plan and "ds-share" not in plan  # 순서 정할 때는 이름만
+    assert "한울 제휴몰" in plan and "중복으로 봅니다" in plan and "ds-share" not in plan  # 중복 찾기에는 이름만
 
 
 def test_offline_engine_asks_management_of_uncovered_targets_and_turns_answers_into_items():

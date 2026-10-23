@@ -54,14 +54,9 @@ INTERPRET_SYSTEM = """\
 """
 
 PLAN_SYSTEM = """\
-당신은 업무 인수인계 인터뷰를 설계합니다. 장(章)별 분석에서 나온 질문 후보를 받아, 인계자에게 물을 순서를 정합니다.
+당신은 업무 인수인계 인터뷰를 설계합니다. 장(章)별 분석에서 나온 질문 후보를 받아, 사실상 같은 정보를 묻는 중복 질문을 찾습니다.
 - duplicates: 사실상 같은 정보를 묻는 질문 쌍입니다(장이 달라도 같은 답이 나오면 중복). 더 잘 쓰인 쪽을 keep_id, 다른 쪽을 drop_id 로 적습니다. 묻는 대상이나 정보가 다르면 중복이 아닙니다.
-- order: 남길 질문 id 를 인수자에게 중요한 순서로 모두 나열합니다. 다음 순서로 판단합니다.
-  1) 인계일 전후로 기한이 닥친 일과 당장 연락해야 할 사람(장애·마감 대응)
-  2) 업무를 이어받는 데 꼭 필요한 권한·계정·처리 방법
-  3) 진행 중인 과제의 현재 상태와 다음 할 일
-  4) 그 밖의 배경 정보
-- 팀 전용 프롬프트가 있으면 그 관점과 우선순위를 순서에 반영합니다.
+- 질문을 묻는 순서는 인수인계서 양식의 장 순서대로 코드가 정하므로 순서는 정하지 않습니다.
 - 질문 문장은 바꾸지 않습니다.
 """
 
@@ -112,7 +107,7 @@ def clean_team_guidelines(guidelines: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def team_prompt_block(guidelines: dict[str, Any] | None) -> str:
-    """팀 전용 프롬프트만(질문 순서 정하기·안내문 쓰기용). 비어 있으면 빈 문자열."""
+    """팀 전용 프롬프트만(안내문 쓰기용). 비어 있으면 빈 문자열."""
     prompt = clean_team_guidelines(guidelines)["prompt"]
     if not prompt:
         return ""
@@ -193,7 +188,7 @@ def dept_notes_block(profile: dict[str, Any], *, slot_key: str = "", purpose: st
 
     - slot_key == "dept_notes": 이 장에서 각 대상(라이센스 업체·가맹점·중요 문서)이 자료에서 어떻게 관리되는지 찾고, 자료에 없으면 '관리 방식'을 인계자에게 묻는다.
     - 그 밖의 장(slot_key): 관련 있는 정보만 분석·질문에 참고한다. 협업 장에서는 협업 부서 정보도 함께 준다.
-    - purpose == "plan": 질문 순서 프롬프트용(이름만, 같은 대상을 묻는 질문은 중복으로 본다).
+    - purpose == "plan": 중복 질문을 찾는 프롬프트용(이름만, 같은 대상을 묻는 질문은 중복으로 본다).
     - 그 밖(slot_key 없음): 인계자와 대화하는 프롬프트용(답변을 이 정보의 대상 이름으로 정리).
     이 정보는 사실의 근거가 아니다. 근거 ID·민감 정보 원칙은 바뀌지 않는다.
     """
@@ -208,7 +203,7 @@ def dept_notes_block(profile: dict[str, Any], *, slot_key: str = "", purpose: st
     if purpose == "plan":
         names = [t["name"] for t in dept_targets(info)]
         lines.append("관리 대상: " + ", ".join(names))
-        lines.append("이 대상들의 관리 방식을 확인하는 질문은 인수자가 부서 업무를 이어받는 데 필요한 정보이므로 순서를 정할 때 가볍게 보지 않습니다. 같은 대상을 묻는 질문끼리는 중복으로 봅니다.")
+        lines.append("같은 대상의 관리 방식을 묻는 질문끼리는 중복으로 봅니다.")
         return "\n".join(lines)
     lines += _info_lines(info)
     if slot_key == "dept_notes":
@@ -327,9 +322,8 @@ def interpret_user(
 def plan_user(profile: dict[str, Any], gaps: list[Gap]) -> str:
     lines = [f"- {g['id']} [{SLOT_BY_KEY[g['slot']].title}] {g.get('question', '')}" for g in gaps]
     dept = dept_notes_block(profile, purpose="plan")
-    team = team_prompt_block(profile.get("team_guidelines"))
-    sections = "".join(f"{block}\n\n" for block in (team, dept) if block)
-    return f"## 인계자 정보\n{profile_block(profile)}\n\n{sections}## 질문 후보\n" + "\n".join(lines)
+    dept_section = f"{dept}\n\n" if dept else ""
+    return f"## 인계자 정보\n{profile_block(profile)}\n\n{dept_section}## 질문 후보\n" + "\n".join(lines)
 
 
 def summary_user(profile: dict[str, Any], slots: dict[str, SlotState], sources: list[dict]) -> str:
