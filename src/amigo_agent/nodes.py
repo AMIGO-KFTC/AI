@@ -28,6 +28,7 @@ from .engine.offline import OfflineEngine
 from .kb import KBAdapter
 from .parties import consolidate_parties, remap_ids
 from .questions import keep_order, rank_by_slot_order
+from .relevance import grounded_updates, off_topic_reason
 from .llm import LLMError, LLMOutputError
 from .precedence import RANK_USER, now_ts
 from .render import render_document, unlinked_children
@@ -39,6 +40,7 @@ from .state import (
     empty_slots,
     evaluate_coverage,
     find_item,
+    item_label,
     merge_item_fields,
     new_id,
     open_gaps,
@@ -419,6 +421,21 @@ def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
             # 맞다고 하면서 정리한 내용을 그대로 되돌려 준 경우: 새 정보가 아니므로 확정으로 처리한다.
             result = Interpretation(intent="confirm", reply=result.reply, resolved_gap_ids=result.resolved_gap_ids)
 
+    if stage != "review" and current and result.intent in ("answer", "correct") and result.updates and not current.get("link_field"):
+        # 모델이 답으로 정리했더라도 질문과 상관없는 말이거나 인계자의 말에 근거가 없는 값이면 기록하지 않는다(코드로 한 번 더 검사).
+        item = find_item((slots.get(current.get("slot", "")) or {}).get("items", []), item_id=current.get("item_id", ""))
+        reason = off_topic_reason(text, current, item_label(SLOT_BY_KEY[current["slot"]], item) if item else "")
+        grounded = [] if reason else grounded_updates(result.updates, text)
+        if not grounded:
+            current["reasked"] = int(current.get("reasked", 0)) + 1
+            reply = (
+                "말씀하신 내용이 이 질문과 관련 있는 답으로 보이지 않아 기록하지 않았어요. 다시 여쭤볼게요.\n\n"
+                f"{current.get('question', '')}\n\n"
+                "답하기 어려우시면 '모르겠어요'라고 하시거나 건너뛰기를 눌러 주세요."
+            )
+            return {"last_intent": "other", "transcript": [user_turn, _say("info", reply, quick_replies=QUICK_REPLIES_QNA, gap_id=current["id"])], "gaps": gaps, "pending": pending}
+        result.updates = grounded
+
     out: dict[str, Any] = {"last_intent": result.intent, "transcript": [user_turn]}
     intent = result.intent
     if redacted:
@@ -479,8 +496,13 @@ def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
             out["pending"] = {"gap_id": current["id"] if current else "", "refs": refs, "keys": keys, "rounds": rounds}
         return out
 
-    # 되묻기·잡담·해석 불가: 답한 뒤 같은 질문에 대한 답을 기다린다.
+    # 되묻기·잡담·해석 불가: 답한 뒤 같은 질문에 대한 답을 기다린다. 질문이 있는 단계에서는 질문을 다시 보여 주고, 건너뛰는 방법도 알려 준다.
     reply = result.reply or "말씀하신 내용을 정확히 이해하지 못했어요. 조금 더 구체적으로 알려 주시겠어요?"
+    if stage != "review" and current and result.intent == "other":
+        question = current.get("question", "")
+        if question and question not in reply:  # 모델이 이미 질문을 다시 물었으면 질문은 덧붙이지 않는다
+            reply += f"\n\n{question}"
+        reply += "\n\n답하기 어려우시면 '모르겠어요'라고 하시거나 건너뛰기를 눌러 주세요."
     out["transcript"].append(_say("info", reply, quick_replies=QUICK_REPLIES_QNA if stage != "review" else []))
     return out
 
