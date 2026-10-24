@@ -30,7 +30,7 @@ from .kb import KBAdapter
 from .parties import consolidate_parties, remap_ids
 from .field_guides import first_ask_example
 from .questions import keep_order, rank_by_slot_order
-from .relevance import grounded_updates, is_explicit_skip, off_topic_reason
+from .relevance import bigrams, is_none_answer
 from .llm import LLMError, LLMOutputError
 from .precedence import RANK_USER, now_ts
 from .render import body_field, render_document, unlinked_children
@@ -59,6 +59,7 @@ logger = logging.getLogger(__name__)
 
 QUICK_REPLIES_QNA = ["모르겠어요 (건너뛰기)", "지금 문서 생성"]
 QUICK_REPLIES_CONFIRM = ["네, 맞아요", "수정할게요"]
+QUICK_REPLIES_UNIT = ["예, 맞아요", "아니요, 아니에요"]  # 단위업무 확인 질문의 두 가지 선택지
 MAX_CONFIRM_ROUNDS = 2  # 정리한 내용과 한 번 고친 내용까지 확인을 묻고, 그다음 고침은 바로 반영
 # 정리한 내용이 맞는지 물었을 때 이렇게만 답하면 LLM 에 묻지 않고 바로 확정한다(빠른 답변 단추 포함).
 PLAIN_CONFIRMS = frozenset({"네", "네.", "네!", "예", "예.", "응", "넵", "넹", "맞아요", "맞아요.", "맞습니다", "맞습니다.", "네, 맞아요", "네 맞아요", "네, 맞아요.", "네 맞습니다", "네, 맞습니다", "그렇습니다", "확인", "확인했어요", "ok", "okay", "yes"})
@@ -289,6 +290,66 @@ def in_scope(gap: Gap) -> bool:
     return bool(re.search(spec.ask_scope, f"{gap.get('question', '')} {gap.get('description', '')}"))
 
 
+def _same_unit(a: str, b: str) -> bool:
+    x, y = normalize_title(a), normalize_title(b)
+    return bool(x and y) and (x == y or (min(len(x), len(y)) >= 3 and (x in y or y in x)))
+
+
+def _unit_check_gaps(profile: dict[str, Any], slots: dict[str, Any], gaps: list[Gap]) -> list[Gap]:
+    """자료에서 찾은 단위업무 중 인계자가 처음에 입력하지 않은 것이 정말 인계 대상인지 예/아니요로 묻는 질문.
+
+    인계자가 단위업무를 빠뜨렸을 수도, 자료에 다른 사람·다른 해의 업무가 섞였을 수도 있어 문서에 넣기 전에 확인한다.
+    """
+    entered = [str(profile.get("task_name") or "").strip()]
+    asked = {g.get("item_id") for g in gaps if g.get("unit_check")}
+    made: list[Gap] = []
+    for item in (slots.get("overview") or {}).get("items", []):
+        name = str((item.get("fields") or {}).get("name") or item.get("title") or "").strip()
+        if not name or item.get("confirmed") or item.get("id") in asked or any(_same_unit(name, unit) for unit in entered):
+            continue
+        made.append(
+            {
+                "id": new_id("gap"),
+                "slot": "overview",
+                "item_id": item["id"],
+                "field": "",
+                "unit_check": True,
+                "description": f"자료에서 찾은 단위업무 '{name}'이(가) 인계 대상인지 확인 필요",
+                "question": f"자료에서 '{name}' 업무를 찾았어요. 이 업무도 이번에 인계하는 단위업무가 맞나요?",
+                "priority": 1,
+                "ask_for_document": False,
+                "status": "open",
+            }
+        )
+    return made
+
+
+YES_RE = re.compile(r"^\s*(예|네|넵|응|어|맞|yes|ok|okay|그래|포함)", re.I)
+NO_RE = re.compile(r"^\s*(아니|아뇨|노\b|no\b)|아니에요|아닙니다|아니야|포함\s*(안|하지)|제외|빼\s*(줘|주세요)|빼요", re.I)
+
+
+def _answer_unit_check(user_turn: Turn, current: Gap, gaps: list[Gap], slots: dict, text: str) -> dict[str, Any] | None:
+    """단위업무 확인 질문의 예/아니요 답: 예면 그 단위업무를 확정하고, 아니요면 문서에서 뺀다(그 업무에 딸린 질문도 함께 뺀다).
+    예/아니요가 아닌 답(예: 이름을 고쳐 말함)은 None 을 돌려 모델이 해석하게 한다."""
+    is_no = bool(NO_RE.search(text))
+    is_yes = not is_no and bool(YES_RE.search(text))
+    if not (is_yes or is_no):
+        return None
+    overview = slots.get("overview") or {}
+    item = find_item(overview.get("items", []), item_id=current.get("item_id", ""))
+    name = str(((item or {}).get("fields") or {}).get("name") or (item or {}).get("title") or "이 업무")
+    current["status"] = "resolved"
+    if is_yes:
+        if item is not None:
+            item["confirmed"] = True
+        ack = f"'{name}'을(를) 인계하는 단위업무로 확인했어요."
+    else:
+        overview["items"] = [it for it in overview.get("items", []) if it.get("id") != current.get("item_id")]
+        gaps[:] = [g for g in gaps if g is current or g.get("item_id") != current.get("item_id")]
+        ack = f"'{name}'은(는) 인계 대상이 아니라서 인수인계서에서 뺐어요."
+    return {"last_intent": "confirm", "transcript": [user_turn], "gaps": gaps, "slots": {"overview": overview}, "pending": {}, "ack": ack}
+
+
 def collect_gaps(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     gaps: list[Gap] = []
     active = slots_for(state.get("profile"))
@@ -307,6 +368,8 @@ def collect_gaps(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str,
     for g in planned:
         if g["id"] in ranks:
             g["rank"] = ranks[g["id"]]
+    if runtime.context.config.confirm_units:
+        planned = _unit_check_gaps(state.get("profile", {}), state.get("slots") or {}, planned) + planned  # 단위업무 확인을 가장 먼저 묻는다
     rank_by_slot_order(planned)  # 엔진이 정한 순서 위에 양식의 장 순서로 후처리(규칙 엔진·Claude 모두 같은 순서가 되게)
     _progress("자료 분석을 마쳤어요.", current=len(active), total=len(active))
     return {"gaps": open_gaps(planned)}
@@ -435,8 +498,8 @@ def ask(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
         slot=gap["slot"],
         number=count,
         remaining=len(open_gaps(gaps)),
-        quick_replies=QUICK_REPLIES_QNA,
-        allow_files=True,
+        quick_replies=QUICK_REPLIES_UNIT if gap.get("unit_check") else QUICK_REPLIES_QNA,
+        allow_files=not gap.get("unit_check"),
     )
     return {"gaps": gaps, "current_gap_id": gap["id"], "question_count": count, "ack": "", "stage": "qna", "transcript": [question]}
 
@@ -482,13 +545,6 @@ MOVING_ON_RE = re.compile(r"넘어가|다음 질문|건너뛰|건너뛸")
 REASK_HINT = "답하기 어려우시면 '모르겠어요'라고 하시거나 건너뛰기를 눌러 주세요."
 
 
-def _reask(user_turn: Turn, current: Gap, gaps: list[Gap], pending: dict[str, Any], lead: str) -> dict[str, Any]:
-    """기록하지도 건너뛰지도 않고 같은 질문을 다시 묻는다(질문 번호·상태는 그대로)."""
-    current["reasked"] = int(current.get("reasked", 0)) + 1
-    reply = f"{lead}\n\n{current.get('question', '')}\n\n{REASK_HINT}"
-    return {"last_intent": "other", "transcript": [user_turn, _say("info", reply, quick_replies=QUICK_REPLIES_QNA, gap_id=current["id"])], "gaps": gaps, "pending": pending}
-
-
 def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     ctx = runtime.context
     raw_text = str((state.get("event") or {}).get("text", "")).strip()
@@ -510,6 +566,15 @@ def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
         open_gaps=open_gaps(gaps),
         transcript=list(state.get("transcript") or []),
     )
+    if stage != "review" and current and not pending and current.get("unit_check"):
+        unit = _answer_unit_check(user_turn, current, gaps, slots, text)  # 예/아니요 선택지 답은 바로 처리한다
+        if unit is not None:
+            return unit
+
+    if stage != "review" and current and not pending and current.get("field") and current.get("item_id") and is_none_answer(text):
+        # '그런 것은 없어'처럼 해당하는 것이 없다는 답: 모델에 맡기지 않고 그 칸을 '해당 없음'으로 채운 뒤 다음 질문으로 넘어간다
+        return _record_none(ctx, state, user_turn, current, gaps, slots, text)
+
     if pending and stage != "review" and is_plain_confirm(text):
         # 확인 단추·'네' 는 해석할 것이 없다. LLM 이 확인 답변을 새 정보로 오해해 같은 정리를 다시 되묻는 일도 막는다.
         result = Interpretation(intent="confirm", reply="확인했습니다.")
@@ -521,19 +586,6 @@ def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
         if result.intent == "confirm" and result.updates and pending and stage != "review":
             # 맞다고 하면서 정리한 내용을 그대로 되돌려 준 경우: 새 정보가 아니므로 확정으로 처리한다.
             result = Interpretation(intent="confirm", reply=result.reply, resolved_gap_ids=result.resolved_gap_ids)
-
-    if stage != "review" and current and result.intent == "skip" and not is_explicit_skip(text):
-        # 모델이 '모름'으로 보고 건너뛰려 해도, 인계자가 모른다·건너뛴다고 분명히 말하지 않았으면('ㅇㅇ'·'음') 건너뛰지 않고 다시 묻는다.
-        return _reask(user_turn, current, gaps, pending, "말씀하신 내용만으로는 답을 알 수 없어서 넘어가지 않았어요. 다시 여쭤볼게요.")
-
-    if stage != "review" and current and result.intent in ("answer", "correct") and result.updates and not current.get("link_field"):
-        # 모델이 답으로 정리했더라도 질문과 상관없는 말이거나 인계자의 말에 근거가 없는 값이면 기록하지 않는다(코드로 한 번 더 검사).
-        item = find_item((slots.get(current.get("slot", "")) or {}).get("items", []), item_id=current.get("item_id", ""))
-        reason = off_topic_reason(text, current, item_label(SLOT_BY_KEY[current["slot"]], item) if item else "")
-        grounded = [] if reason else grounded_updates(result.updates, text)
-        if not grounded:
-            return _reask(user_turn, current, gaps, pending, "말씀하신 내용이 이 질문과 관련 있는 답으로 보이지 않아 기록하지 않았어요. 다시 여쭤볼게요.")
-        result.updates = grounded
 
     out: dict[str, Any] = {"last_intent": result.intent, "transcript": [user_turn]}
     intent = result.intent
@@ -599,15 +651,30 @@ def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
     # 되묻기·잡담·해석 불가: 답한 뒤 같은 질문에 대한 답을 기다린다. 질문이 있는 단계에서는 질문을 다시 보여 주고, 건너뛰는 방법도 알려 준다.
     reply = result.reply or "말씀하신 내용을 정확히 이해하지 못했어요. 조금 더 구체적으로 알려 주시겠어요?"
     if stage != "review" and current and result.intent == "other":
-        # 모델 문장이 '다음 질문으로 넘어가겠습니다'처럼 사실과 다르거나 질문을 자기 말로 바꿔 다시 물으면(질문이 두 번 나옴) 정해진 문구로 바꾼다
-        if MOVING_ON_RE.search(reply) or "?" in reply:
+        # 모델(Opus)의 설명은 그대로 쓴다. '다음 질문으로 넘어가겠습니다'처럼 사실과 다른 문장만 정해진 문구로 바꾼다.
+        if MOVING_ON_RE.search(reply):
             reply = "말씀하신 내용만으로는 답을 알 수 없어서 넘어가지 않았어요. 다시 여쭤볼게요."
         question = current.get("question", "")
-        if question and question not in reply:  # 모델이 이미 질문을 다시 물었으면 질문은 덧붙이지 않는다
+        asked_again = "?" in reply or len(bigrams(question) & bigrams(reply)) >= len(bigrams(question)) * 0.5
+        if question and not asked_again:  # 모델이 질문을 다시 했으면 원래 질문은 덧붙이지 않는다(한 메시지에 질문 하나)
             reply += f"\n\n{question}"
         reply += f"\n\n{REASK_HINT}"
     out["transcript"].append(_say("info", reply, quick_replies=QUICK_REPLIES_QNA if stage != "review" else []))
     return out
+
+
+NONE_VALUE = "해당 없음"
+
+
+def _record_none(ctx: AgentContext, state: AgentState, user_turn: Turn, current: Gap, gaps: list[Gap], slots: dict, text: str) -> dict[str, Any]:
+    """묻는 칸에 해당하는 것이 없다는 답을 '해당 없음'으로 기록하고 질문을 마친다(확인을 다시 묻지 않는다)."""
+    spec = SLOT_BY_KEY[current["slot"]]
+    item = find_item((slots.get(spec.key) or {}).get("items", []), item_id=current["item_id"])
+    update = {"slot": spec.key, "item_id": current["item_id"], "title": item_label(spec, item) if item else "", "fields": {current["field"]: NONE_VALUE}, "citations": []}
+    _apply_updates(ctx, state, slots, Interpretation(intent="answer", updates=[update]), text, current)
+    current["status"] = "resolved"
+    ack = f"'{spec.label(current['field'])}'은(는) '{NONE_VALUE}'으로 기록했어요."
+    return {"last_intent": "confirm", "transcript": [user_turn], "gaps": gaps, "slots": {spec.key: slots[spec.key]}, "pending": {}, "ack": ack}
 
 
 def _apply_updates(ctx: AgentContext, state: AgentState, slots: dict, result: Interpretation, text: str, current: Gap | None) -> list[list[str]]:
