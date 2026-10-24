@@ -37,6 +37,7 @@ from .graph import build_graph
 from .kb import KBAdapter
 from .nodes import AgentContext
 from .precedence import RANK_USER
+from .qa import QAScope, answer_from_materials
 from .render import render_document
 from .state import open_gaps
 
@@ -89,6 +90,10 @@ class HandoverAgent:
         """Claude 엔진이면 지금까지의 API 호출 수·토큰 사용량·추정 비용(USD), 오프라인 엔진이면 None."""
         llm = getattr(self.engine, "llm", None)
         return llm.usage.summary(self.config.model) if llm is not None else None
+
+    def answer_question(self, question: str, history: list[dict[str, str]], scopes: list[QAScope]) -> dict[str, Any]:
+        """올린 자료·인계자 답변(지식베이스)과 인수인계서를 근거로 질문에 답한다(상태를 바꾸지 않는다). Claude 엔진이 아니면 관련 근거를 그대로 보여 준다."""
+        return answer_from_materials(getattr(self.engine, "llm", None), self.config, question, history, scopes)
 
     def mermaid(self) -> str:
         return self.graph.get_graph().draw_mermaid()
