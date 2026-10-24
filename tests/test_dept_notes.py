@@ -29,11 +29,11 @@ def test_clean_and_targets():
 
 def test_no_info_means_no_prompt_section():
     assert dept_notes_block(PROFILE) == "" and dept_notes_block({"dept_notes": {"documents": [], "franchises": [], "licenses": []}}) == ""
-    assert "특이사항" not in analysis_user(SLOT_BY_KEY["dept_notes"], PROFILE, "근거", 2)
+    assert "특이사항" not in analysis_user(SLOT_BY_KEY["dept_notes"], PROFILE, "근거")
 
 
 def test_analysis_prompt_shows_facts_and_asks_for_management_not_known_info():
-    text = analysis_user(SLOT_BY_KEY["dept_notes"], WITH_INFO, "근거", 2)
+    text = analysis_user(SLOT_BY_KEY["dept_notes"], WITH_INFO, "근거")
     assert "우리 부서 특이사항" in text and "한울 제휴몰" in text and "한빛웹솔루션(홈페이지 CMS)" in text and "\\\\ds-share" in text
     assert "관리 방식" in text and "gaps" in text and "근거 ID" in text
     assert "이미 있는 정보는 다시 묻지 않습니다" in text and "협업 부서" not in text

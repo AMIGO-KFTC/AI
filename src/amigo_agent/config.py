@@ -36,7 +36,7 @@ class AgentConfig:
     effort_chat: str = field(default_factory=lambda: os.getenv("AMIGO_EFFORT_CHAT", "low"))
     # 안전 분류기가 요청을 거절하면 서버 측에서 권장 모델로 재시도(server-side fallbacks)
     use_fallbacks: bool = field(default_factory=lambda: _env_bool("AMIGO_LLM_FALLBACKS", True))
-    max_questions: int = field(default_factory=lambda: _env_int("AMIGO_MAX_QUESTIONS", 12))
+    # 질문 수는 제한하지 않는다(암묵지를 확인할 질문은 모두 묻는다). 아래 값은 규칙 엔진(오프라인)의 장별 질문 후보 수에만 쓴다.
     max_gaps_per_slot: int = field(default_factory=lambda: _env_int("AMIGO_MAX_GAPS_PER_SLOT", 2))
     max_concurrency: int = field(default_factory=lambda: _env_int("AMIGO_MAX_CONCURRENCY", 3))
     search_top_k: int = field(default_factory=lambda: _env_int("AMIGO_SEARCH_TOP_K", 6))

@@ -556,8 +556,7 @@ agent.snapshot(session_id)  # {"stage","waiting","slots","gaps","pending","docum
 | `AMIGO_EFFORT_ANALYSIS` / `_CHAT` | `medium` / `low` | 단계별 effort |
 | `AMIGO_LLM_FALLBACKS` | `true` | 서버 측 거절 fallback |
 | `AMIGO_LLM_TIMEOUT` | `300` | API 요청 제한 시간(초) |
-| `AMIGO_MAX_QUESTIONS` | `12` | 최대 질문 수 |
-| `AMIGO_MAX_GAPS_PER_SLOT` | `2` | 슬롯당 질문 후보 수 |
+| `AMIGO_MAX_GAPS_PER_SLOT` | `2` | 규칙 엔진(오프라인)의 슬롯당 질문 후보 수. Claude 모드와 전체 질문 수에는 제한이 없다(암묵지를 확인할 질문은 모두 묻는다) |
 | `AMIGO_MAX_CONCURRENCY` | `3` | 슬롯 병렬 분석 수(최소 2) |
 | `AMIGO_SEARCH_TOP_K`, `AMIGO_MAX_TOOL_ROUNDS` | `6`, `3` | 검색 결과 수, 도구 호출 횟수 |
 | `AMIGO_HIDE_IRRELEVANT` | `true` | `search_documents` 도구 결과에서 RAG 가 '질문과 관련 없음'으로 판정한 조각을 숨기고 "자료에 없을 가능성이 큼"이라고 알림. 장별 기본 검색(넓은 주제 탐색)에는 적용하지 않음. 판정 기준은 RAG 의 `AMIGO_RAG_MIN_RELEVANCE` |

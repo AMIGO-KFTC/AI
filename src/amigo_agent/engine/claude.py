@@ -90,6 +90,7 @@ class InterpretOutput(BaseModel):
     intent: Literal["answer", "confirm", "correct", "skip", "finish", "question", "other"]
     updates: list[ItemUpdate]
     resolved_gap_ids: list[str]
+    followup: str  # 답이 작성 가이드의 핵심 요소를 빠뜨렸을 때 그 요소만 묻는 보충 질문(없으면 빈 문자열)
     reply: str
 
 
@@ -156,7 +157,7 @@ class ClaudeEngine:
         evidences = retrieve_for_slot(spec, profile, kb, top_k=self.config.search_top_k)
         output = self.llm.structured(
             system=ANALYSIS_SYSTEM,
-            user=analysis_user(spec, profile, registry.format(evidences), self.config.max_gaps_per_slot + 1),
+            user=analysis_user(spec, profile, registry.format(evidences)),
             output_model=slot_output_model(spec.key),
             effort=self.config.effort_analysis,
             tools=[SEARCH_TOOL],
@@ -173,7 +174,7 @@ class ClaudeEngine:
             upsert_item(slot, item_id="", title=item.title, fields=fields, citations=citations, origin="document", defer=True)
         slot["coverage"] = combine_coverage(evaluate_coverage(spec, slot["items"]), output.coverage)
         gaps: list[Gap] = []
-        for proposal in output.gaps[: self.config.max_gaps_per_slot]:
+        for proposal in output.gaps:  # 질문 후보는 모두 받는다(암묵지를 확인할 질문을 줄이지 않는다)
             related = next((it for it in slot["items"] if proposal.related_item_title and it.get("title") == proposal.related_item_title), None)
             gaps.append(
                 {
@@ -265,7 +266,9 @@ class ClaudeEngine:
                     "citations": registry.citations(up.evidence_ids, hint=up.title),
                 }
             )
-        return Interpretation(intent=output.intent, updates=updates, resolved_gap_ids=list(output.resolved_gap_ids), reply=output.reply.strip())
+        return Interpretation(
+            intent=output.intent, updates=updates, resolved_gap_ids=list(output.resolved_gap_ids), reply=output.reply.strip(), followup=output.followup.strip()
+        )
 
 
 def _pending_text(data: InterpretInput) -> str:

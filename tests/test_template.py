@@ -128,7 +128,8 @@ def test_code_asks_every_empty_required_field_the_model_did_not_ask():
     slots = {"leave_tasks": {"items": [item]}}
     model_gap = {"id": "gap-1", "slot": "leave_tasks", "item_id": "leave_tasks-1", "question": "현재 진행단계는 어디까지인가요?", "status": "open"}
     made = _missing_field_gaps(slots, slots_for(LEAVE), [model_gap])
-    assert [g["question"] for g in made] == ["'홈페이지 개편'의 참고자료을(를) 알려 주세요."]  # 진행 상태는 모델이 이미 묻고, 참고자료만 빠졌다
+    # 진행 상태는 모델이 이미 묻고, 참고자료만 빠졌다. 빠진 항목이 하나면 노션 양식의 질문 예시로 묻는다
+    assert [g["question"] for g in made] == ["'홈페이지 개편'의 참고자료에 대해 여쭤볼게요. 업무 중에 자주 열어보는 자료는 무엇인가요?"]
     assert _missing_field_gaps(slots, slots_for(LEAVE), [model_gap, *made]) == []
 
 

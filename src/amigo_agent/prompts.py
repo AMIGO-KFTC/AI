@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .field_guides import guide_for
 from .links import link_names_block
 from .dept_info import clean_dept_info, has_info, targets as dept_targets
 from .state import Gap, SlotState, Turn
@@ -34,6 +35,12 @@ ANALYSIS_SYSTEM = """\
 - 업무 히스토리(주요 결정사항·협의사항)는 '무엇을 왜 그렇게 결정했는지'와 근거(메일·메신저·회의록)가 드러나게 씁니다. 자료에 없으면 gaps 로 남깁니다.
 - 질문은 인계자가 당시 상황을 떠올릴 수 있게 구체적인 업무·시점·상대를 들어 묻습니다(예: '차액 정산 방식을 지금처럼 정하기까지 어떤 논의가 있었나요?').
 - 시스템 ID·비밀번호·토큰 같은 민감 정보는 기록하지 않고 질문하지도 않습니다. 시스템 이름과 권한 신청 방법만 다룹니다.
+- 필드마다 '작성 기준'(작성 가이드·작성 예시·질문 예시·질문 조건)이 주어지면 다음처럼 씁니다.
+  · 작성 가이드는 그 필드가 갖춰야 할 요소입니다. 값이 있어도 가이드의 핵심 요소가 자료에 없으면(예: 절차에 단계가 없음, 의사결정에 판단 근거가 없음) 그 빠진 요소를 gaps 로 남깁니다. 문서로 확인되지 않는 경험·판단 근거·주의점(암묵지)이 바로 묻을 대상입니다.
+  · gaps 의 description 에는 어떤 요소가 빠졌는지(예: '판단 근거 없음')를 씁니다.
+  · 질문은 질문 예시의 말투와 범위를 본뜨되, 자료에서 확인한 내용을 먼저 짧게 언급하고 빠진 부분만 콕 집어 묻습니다. 질문 예시를 그대로 복사하지 않습니다.
+  · 질문 조건을 따릅니다(예: '대부분 자료를 기반으로 작성'이면 자료에 없을 때만 묻고, '건너뛰어도 되는 질문'이면 중요도를 낮춥니다).
+  · 필드 값은 작성 예시의 형식(단계 번호, 화살표, 시기순 등)을 따르되, 내용은 자료에 있는 것만 씁니다. 작성 예시의 내용을 옮겨 쓰지 않습니다.
 - 모든 문장은 한국어 존댓말로 씁니다.
 
 """
@@ -47,6 +54,8 @@ INTERPRET_SYSTEM = """\
 - 답변이 자료와 다르거나 자료를 확인해야 하면 search_documents 로 확인합니다. 내용이 다르면 reply 에서 정중하게 어느 쪽이 맞는지 확인을 요청합니다.
 - updates: 기존 항목을 고치면 그 item_id 를 쓰고, 새 항목이면 item_id 를 빈 문자열로 둡니다. fields 에는 해당 장의 필드 키만 씁니다. 검색 결과를 근거로 썼으면 evidence_ids 에 E 번호를 적습니다.
 - resolved_gap_ids: 이번 답변으로 해소된 질문 ID(현재 질문 외에 함께 해소된 것도 포함).
+- '현재 질문의 작성 기준'이 주어지면 답변을 필드에 정리할 때 작성 예시의 형식을 따르고(내용은 인계자의 말만), 작성 가이드의 핵심 요소를 채웠는지 봅니다.
+- followup: intent 가 answer/correct 이고 답이 작성 가이드의 핵심 요소를 빠뜨렸으면(예: 결정은 말했는데 이유가 없음, 절차에 순서가 없음) 그 빠진 요소 하나만 묻는 짧은 질문 한 문장을 씁니다. 충분하거나, 현재 질문이 이미 보충 질문이거나, 인계자가 모른다고 했으면 빈 문자열입니다. 이 질문은 다음 차례에 따로 묻으므로 reply 에는 넣지 않습니다.
 - reply: 인계자에게 보낼 메시지(존댓말, 4문장 이내).
   · answer/correct 이고 updates 가 있으면 정리한 내용을 항목별로 짧게 요약하고 "맞으면 '네', 고칠 부분이 있으면 말씀해 주세요."로 끝냅니다(교차 확인).
   · question 이면 질문에 답한 뒤 원래 질문을 짧게 다시 묻습니다.
@@ -232,8 +241,17 @@ def dept_notes_block(profile: dict[str, Any], *, slot_key: str = "", purpose: st
     return "\n".join(lines)
 
 
+def guide_lines(spec: SlotSpec, key: str, indent: str = "  · ") -> str:
+    guide = guide_for(spec.key, key)
+    return "".join(f"\n{indent}{line}" for line in guide.lines()) if guide else ""
+
+
 def slot_spec_block(spec: SlotSpec) -> str:
-    fields = "\n".join(f"- {f.key}({f.label}){': ' + f.hint if f.hint else ''}" for f in spec.fields)
+    """장의 필드 정의. 필드마다 핵심 질문(hint)과 노션 양식의 작성 기준(field_guides)을 함께 준다."""
+    fields = "\n".join(f"- {f.key}({f.label}){': ' + f.hint if f.hint else ''}{guide_lines(spec, f.key)}" for f in spec.fields)
+    whole = guide_lines(spec, "*", indent="- ")
+    if whole:
+        fields += f"\n\n이 장 전체의 작성 기준:{whole}"
     conditional = "".join(
         f"\n조건부 필수: {key}({spec.label(key)}) 는 {when}({spec.label(when)}) 에 '{'·'.join(values)}' 이(가) 들어갈 때만 필수입니다(그 밖에는 비워 두고 묻지 않습니다)."
         for key, when, values in spec.required_when
@@ -244,7 +262,7 @@ def slot_spec_block(spec: SlotSpec) -> str:
     )
 
 
-def analysis_user(spec: SlotSpec, profile: dict[str, Any], evidence_text: str, max_gaps: int) -> str:
+def analysis_user(spec: SlotSpec, profile: dict[str, Any], evidence_text: str) -> str:
     team = team_guidelines_block(profile.get("team_guidelines"), slot_key=spec.key)
     dept = dept_notes_block(profile, slot_key=spec.key)
     links = link_names_block(profile["_link_slots"], spec) if profile.get("_link_slots") is not None else ""
@@ -253,7 +271,7 @@ def analysis_user(spec: SlotSpec, profile: dict[str, Any], evidence_text: str, m
     return (
         f"## 인계자 정보\n{profile_block(profile)}\n\n{slot_spec_block(spec)}\n\n{team_section}"
         f"## 근거 자료(검색 결과)\n{evidence}\n\n"
-        f"위 근거와 필요하면 추가 검색 결과를 바탕으로 '{spec.title}' 장을 작성하세요. gaps 는 최대 {max_gaps}개입니다."
+        f"위 근거와 필요하면 추가 검색 결과를 바탕으로 '{spec.title}' 장을 작성하세요. gaps 에는 인계자에게 확인해야 할 내용(특히 문서로 확인되지 않는 경험·판단 근거·주의점)을 개수 제한 없이 모두 담습니다."
     )
 
 
@@ -289,7 +307,7 @@ def transcript_block(transcript: list[Turn], limit: int = 8) -> str:
 def gaps_block(gaps: list[Gap]) -> str:
     if not gaps:
         return "(남은 질문 없음)"
-    return "\n".join(f"- {g['id']} [{SLOT_BY_KEY[g['slot']].title}] {g.get('description', '')}" for g in gaps[:12])
+    return "\n".join(f"- {g['id']} [{SLOT_BY_KEY[g['slot']].title}] {g.get('description', '')}" for g in gaps)
 
 
 def interpret_user(
@@ -308,6 +326,14 @@ def interpret_user(
             f"- id: {current_gap['id']}\n- 장: {SLOT_BY_KEY[current_gap['slot']].title} [{current_gap['slot']}]\n"
             f"- 관련 항목 id: {current_gap.get('item_id') or '(없음)'}\n- 질문: {current_gap.get('question', '')}"
         )
+        if current_gap.get("followup_of"):
+            gap_text += "\n- (참고) 앞 답변에서 빠진 요소를 묻는 보충 질문입니다. followup 은 빈 문자열로 둡니다."
+        spec = SLOT_BY_KEY[current_gap["slot"]]
+        criteria = "\n".join(f"- {f.label}{guide_lines(spec, f.key)}" for f in spec.fields if guide_for(spec.key, f.key))
+        if guide_for(spec.key):
+            criteria += f"\n- {spec.title} 전체{guide_lines(spec, '*')}"
+        if criteria.strip():
+            gap_text += f"\n\n## 현재 질문의 작성 기준({spec.title})\n{criteria.strip()}"
         if current_gap.get("reopened"):
             gap_text += "\n- (참고) 인계자가 이미 답했던 질문을 다시 열었습니다. 새 메시지는 앞의 답을 고치는 답변이므로, 기존 값과 다르면 새 값으로 updates 에 담으세요."
     else:

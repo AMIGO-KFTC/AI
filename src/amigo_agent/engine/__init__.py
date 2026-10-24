@@ -40,6 +40,7 @@ class Interpretation:
     updates: list[dict[str, Any]] = field(default_factory=list)  # {"slot","item_id","title","fields","citations"}
     resolved_gap_ids: list[str] = field(default_factory=list)
     reply: str = ""
+    followup: str = ""  # 답이 작성 가이드의 핵심 요소를 빠뜨렸을 때 그 요소만 묻는 보충 질문
 
 
 class Engine(Protocol):

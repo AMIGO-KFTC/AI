@@ -28,9 +28,9 @@ def test_empty_guidelines_add_nothing():
     for empty in (None, {}, {"items": [], "notes": ""}, {"items": [{"name": "  ", "instruction": "x"}], "notes": "  "}, "문자열", []):
         assert team_guidelines_block(empty) == ""
     spec = SLOT_BY_KEY["regular"]
-    base = analysis_user(spec, PROFILE, "근거", 3)
+    base = analysis_user(spec, PROFILE, "근거")
     assert HEADING not in base
-    assert analysis_user(spec, {**PROFILE, "team_guidelines": {"items": [], "notes": ""}}, "근거", 3) == base  # 지침이 비면 기존 프롬프트와 똑같다
+    assert analysis_user(spec, {**PROFILE, "team_guidelines": {"items": [], "notes": ""}}, "근거") == base  # 지침이 비면 기존 프롬프트와 똑같다
 
 
 def test_block_lists_items_and_notes():
@@ -79,10 +79,10 @@ def test_clean_drops_blank_names_and_limits_size():
 
 def test_analysis_prompt_carries_guidelines_between_slot_and_evidence():
     spec = SLOT_BY_KEY["dept_notes"]
-    text = analysis_user(spec, {**PROFILE, "team_guidelines": GUIDE}, "근거 본문", 3)
+    text = analysis_user(spec, {**PROFILE, "team_guidelines": GUIDE}, "근거 본문")
     assert text.index("## 작성할 장") < text.index(HEADING) < text.index("## 근거 자료")
     assert "위 항목을 살핍니다" in text  # 부서별 추가 자료 장에서는 팀 항목을 모두 살핀다
-    regular = analysis_user(SLOT_BY_KEY["regular"], {**PROFILE, "team_guidelines": GUIDE}, "근거 본문", 3)
+    regular = analysis_user(SLOT_BY_KEY["regular"], {**PROFILE, "team_guidelines": GUIDE}, "근거 본문")
     assert "성격에 맞는 항목만" in regular
 
 
@@ -114,7 +114,7 @@ def test_team_prompt_goes_before_the_items_and_alone_is_enough():
 
 def test_team_prompt_reaches_both_prompts_and_is_limited():
     guided = {**PROFILE, "team_guidelines": {"items": [], "notes": "", "prompt": "판단 기준: 담당자 연락처를 가장 먼저 확인한다."}}
-    assert "판단 기준: 담당자 연락처" in analysis_user(SLOT_BY_KEY["regular"], guided, "근거", 3)
+    assert "판단 기준: 담당자 연락처" in analysis_user(SLOT_BY_KEY["regular"], guided, "근거")
     chat = interpret_user(profile=guided, stage="qna", current_gap=None, pending_text="", slots={}, open_gaps=[], transcript=[], message="네")
     assert "판단 기준: 담당자 연락처" in chat
     assert len(clean_team_guidelines({"prompt": "가" * (MAX_TEAM_PROMPT + 10)})["prompt"]) == MAX_TEAM_PROMPT
