@@ -28,12 +28,11 @@ from . import Interpretation, InterpretInput, SlotResult, retrieve_for_slot
 # 표 머리글 → 슬롯 필드 매핑. 같은 머리글이 여러 필드에 걸릴 수 있어 구체적인 필드를 앞에, 짧은 이름(업무명 등)을 맡는 name 은 맨 뒤에 둔다.
 _UNIT = {
     "period": ("계획기간", "처리시기", "기간", "일정", "시기"),
-    "note": ("비고",),
+    "note": ("진행상황요약", "진행상황", "진행현황", "현황", "비고"),
     "name": ("단위업무명", "단위업무", "업무명", "담당업무", "업무"),
 }
 HEADER_SYNONYMS: dict[str, dict[str, tuple[str, ...]]] = {
     "overview": _UNIT,
-    "leave_units": _UNIT,
     "regular": {
         "overview": ("업무개요", "개요", "소개", "설명"),
         "cycle": ("주기", "빈도"),
@@ -41,7 +40,6 @@ HEADER_SYNONYMS: dict[str, dict[str, tuple[str, ...]]] = {
         "procedure": ("수행절차", "처리절차", "절차", "방법"),
         "key_points": ("중점관리사항", "중요사항", "유의사항", "중요하게"),
         "decisions": ("의사결정", "판단근거", "주요결정", "결정사항"),
-        "collaboration": ("협업", "협의사항", "주요협의"),
         "future": ("향후과제", "발전방향", "향후"),
         "references": ("참고자료", "관련근거", "근거", "팁"),
         "name": ("세부업무명", "업무명", "업무", "작업"),
@@ -62,15 +60,30 @@ HEADER_SYNONYMS: dict[str, dict[str, tuple[str, ...]]] = {
         "_person": ("담당자", "성명", "이름", "담당"),  # 부서 열이 따로 있으면 그 이름에 붙이고, 없으면 이 열이 담당자(팀 또는 개인)다
         "party": ("협의상대", "부서", "기관", "업체", "소속", "협업대상", "이해관계자"),
     },
+    "partners": {
+        "task": ("관련업무", "세부업무명", "업무명"),
+        "role": ("주요역할", "역할", "협의사항", "주요협의사항"),
+        "phone": ("연락처", "전화", "내선", "이메일"),
+        "note": ("비고", "유의사항", "협업시유의사항"),
+        "org": ("소속", "협업대상", "부서", "기관", "업체"),
+        "name": ("이름", "성명", "담당자"),
+    },
     "leave_tasks": {
-        "overview": ("업무개요", "개요", "설명"),
+        "task_type": ("업무유형", "유형", "구분"),
         "schedule": ("주요일정", "처리사항", "일정", "시기"),
+        "status": ("현재진행상태", "진행상태", "진행현황", "현황"),
         "method": ("처리방법", "방법", "절차"),
-        "key_points": ("중점관리사항", "중요사항", "유의사항"),
-        "emergency": ("비상대응", "비상", "대응협조", "협조사항", "문의처"),
-        "pending": ("미결사항", "후속조치", "미결"),
+        "cautions": ("주의사항", "후속조치", "비상대응", "미결사항", "유의사항"),
         "references": ("참고자료", "매뉴얼"),
         "name": ("세부업무명", "업무명", "업무", "작업"),
+    },
+    "contacts": {
+        "org": ("기관", "회사", "업체", "소속기관"),
+        "dept": ("부서", "팀", "소속"),
+        "position": ("직책", "직급", "직위"),
+        "phone": ("연락처", "전화", "내선", "휴대폰", "이메일"),
+        "task": ("관련업무", "담당업무", "업무"),
+        "name": ("이름", "성명", "담당자"),
     },
     "systems": {
         "name": ("시스템명", "시스템", "도구"),
@@ -88,17 +101,18 @@ HEADER_SYNONYMS: dict[str, dict[str, tuple[str, ...]]] = {
 # 표가 해당 슬롯의 표로 인정되려면 제목 열 외에 이 중 하나 이상의 열이 있어야 한다
 COMPANION_FIELDS: dict[str, set[str]] = {
     "overview": {"period", "note"},
-    "leave_units": {"period", "note"},
     "regular": {"cycle", "timing", "procedure", "overview", "decisions"},
     "irregular": {"overview", "goals", "progress", "future"},
     "stakeholders": {"discussed", "upcoming", "project", "_person"},
-    "leave_tasks": {"schedule", "method", "overview"},
+    "partners": {"role", "phone", "note", "task"},
+    "leave_tasks": {"schedule", "method", "task_type", "cautions"},
+    "contacts": {"phone", "org", "dept", "position"},
     "systems": {"purpose", "access", "how_to_get"},
     "dept_notes": {"detail", "basis"},
 }
 
 PARTY_SLOTS = ("stakeholders",)
-SENTENCE_FALLBACK_ONLY = {"overview", "leave_units", "systems", "irregular", "dept_notes"}
+SENTENCE_FALLBACK_ONLY = {"overview", "systems", "irregular", "dept_notes", "contacts", "partners"}
 
 DEPT_HINTS = re.compile(r"외주|가맹점|라이선스|라이센스|위탁|특이사항|세부시행세칙")
 PROJECT_HINTS = re.compile(r"추진|예정|진행 중|진행중|검토 중|입찰|작성 중")
@@ -284,7 +298,7 @@ class OfflineEngine:
             match = SYSTEM_NAME_RE.search(sentence)
             if match and re.search(r"권한|계정|콘솔|접속|로그인", sentence):
                 yield match.group(1), {"name": match.group(1), "purpose": sentence}
-        elif key in ("overview", "leave_units"):
+        elif key == "overview":
             if re.search(r"담당한다|담당하며|수행한다|담당 업무", sentence) and re.search(r"업무|관리|운영", sentence):
                 yield short_title(sentence, 30), {"name": short_title(sentence, 40), "note": sentence}
 

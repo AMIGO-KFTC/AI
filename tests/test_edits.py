@@ -38,9 +38,9 @@ def test_edit_replaces_period_and_beats_later_document_value():
 
 def _bar_rows(markdown):
     """월별 일정표에서 {단위업무명: 막대가 칠해진 달 집합}."""
-    table = next(t for t in html_tables(markdown) if len(t[0]) == 14)
+    table = next(t for t in html_tables(markdown) if len(t) > 1 and texts(t[1])[:1] == ["1월"])
     rows = {}
-    for row in table[1:]:
+    for row in table[2:]:  # 머리글 2행(계획기간 / 1~12월) 다음부터
         month, months = 1, set()
         for cell in row[1:-1]:
             if cell["cls"] == "bar":

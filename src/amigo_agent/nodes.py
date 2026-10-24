@@ -32,7 +32,7 @@ from .questions import keep_order, rank_by_slot_order
 from .relevance import grounded_updates, is_explicit_skip, off_topic_reason
 from .llm import LLMError, LLMOutputError
 from .precedence import RANK_USER, now_ts
-from .render import render_document, unlinked_children
+from .render import body_field, render_document, unlinked_children
 from .state import (
     AgentState,
     Gap,
@@ -43,7 +43,9 @@ from .state import (
     find_item,
     item_label,
     merge_item_fields,
+    missing_fields,
     new_id,
+    normalize_title,
     open_gaps,
     resolve_slots,
     turn,
@@ -136,7 +138,7 @@ def prepare(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]
 
 def fan_out(state: AgentState) -> list[Send]:
     """슬롯별 분석을 병렬로 실행한다(LangGraph Send 를 이용한 map-reduce)."""
-    # 다른 장에 붙는 장(협업관계·비상 대응)은 붙는 장의 이름이 나온 뒤에 분석한다(analyze_children)
+    # 다른 장에 붙는 장(협업관계)은 붙는 장의 이름이 나온 뒤에 분석한다(analyze_children)
     return [Send("analyze_slot", {"slot_key": key, "profile": state.get("profile", {})}) for key in (s.key for s in slots_for(state.get("profile"))) if not SLOT_BY_KEY[key].embed_into]
 
 
@@ -152,7 +154,7 @@ def analyze_slot(payload: dict[str, Any], runtime: Runtime[AgentContext]) -> dic
 
 
 def analyze_children(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
-    """다른 장에 붙는 장(주요 협업관계·비상 대응)을 분석한다. 붙는 장(프로젝트·세부 업무)의 항목 이름을 프롬프트에 주어 연결 필드를 그 이름과 글자 그대로 쓰게 한다."""
+    """다른 장에 붙는 장(주요 협업관계)을 분석한다. 붙는 장(프로젝트)의 항목 이름을 프롬프트에 주어 연결 필드를 그 이름과 글자 그대로 쓰게 한다."""
     profile = state.get("profile", {})
     children = [s.key for s in slots_for(profile) if SLOT_BY_KEY[s.key].embed_into]
     if not children:
@@ -163,6 +165,7 @@ def analyze_children(state: AgentState, runtime: Runtime[AgentContext]) -> dict[
         spec = SLOT_BY_KEY[key]
         _progress(f"'{spec.title}' 분석 중", slot=key, status="running")
         result = _analyze(runtime.context, key, {**profile, "_link_slots": slots})
+        fix_party_names(spec, result.slot.get("items") or [], slots)
         slot = _slot_with_gaps(result)
         _emit({"type": "slot", "key": key, "slot": result.slot})
         _progress(f"'{spec.title}' 분석 완료 · {COVERAGE_LABELS.get(slot['coverage'], '')}", slot=key, status="done")
@@ -170,11 +173,37 @@ def analyze_children(state: AgentState, runtime: Runtime[AgentContext]) -> dict[
     return {"slots": out}
 
 
+ORG_RE = re.compile(r"(?:\(주\)|㈜|주식회사)\s*\S+|\S+(?:팀|부|과|실|국|처|센터|본부|기관|공사|공단|위원회|회사)$")
+
+
+def fix_party_names(spec: Any, items: list[dict], slots: dict[str, Any]) -> None:
+    """협업관계 표의 '이름' 칸에는 사람 이름 또는 팀·기관명만 둔다.
+
+    모델이 업무명·시스템명(다른 장의 항목 이름)을 이름 칸에 쓰면(예: '도메인·SSL 인증서 관리 (총무팀)'),
+    괄호 속 팀·기관명이 있으면 그것으로 바꾸고, 없으면 비워 두어 질문(빈 필수 항목)으로 묻게 한다.
+    """
+    if spec.key != "partners":
+        return
+    titles = {normalize_title(str(it.get("title") or "")) for key, slot in slots.items() if key != spec.key for it in (slot or {}).get("items", [])}
+    titles.discard("")
+    for item in items:
+        fields = item.setdefault("fields", {})
+        name = str(fields.get("name") or "").strip()
+        bare = normalize_title(re.sub(r"\(.*?\)", "", name))
+        if not bare or not any(len(t) >= 4 and (t in bare or bare in t) for t in titles):
+            continue
+        inner = [m.strip() for m in re.findall(r"\(([^)]*)\)", name) if ORG_RE.search(m.strip())]
+        fields["name"] = inner[0] if inner else ""
+        if inner and not str(fields.get("org") or "").strip():
+            fields["org"] = inner[0]
+        item["title"] = fields["name"]
+
+
 MAX_LINK_GAPS = 2  # 장마다 만드는 연결 질문 수
 
 
 def _link_gaps(slots: dict[str, Any], active: list[Any], gaps: list[Gap]) -> list[Gap]:
-    """협업관계·비상 대응 항목이 붙는 장(프로젝트·세부 업무)의 어느 항목에도 맞지 않으면, 어느 항목인지 묻는 질문을 만든다(문서는 양식에 없는 표를 싣지 않는다)."""
+    """협업관계 항목이 붙는 장(프로젝트)의 어느 항목에도 맞지 않으면, 어느 항목인지 묻는 질문을 만든다(문서는 양식에 없는 표를 싣지 않는다)."""
     linked_asked = {g.get("item_id") for g in gaps if g.get("link_field")}  # 이미 연결을 묻는 항목
     any_asked = {g.get("item_id") for g in gaps if g.get("item_id")}
     made: list[Gap] = []
@@ -188,8 +217,8 @@ def _link_gaps(slots: dict[str, Any], active: list[Any], gaps: list[Gap]) -> lis
         parent = SLOT_BY_KEY[child.embed_into]
         names = [str((p.get("fields") or {}).get(parent.title_field) or p.get("title") or "") for p in (slots.get(child.embed_into) or {}).get("items", [])]
         names = [n for n in names if n][:6]
-        who = (item.get("fields") or {}).get("party") or item.get("title") or "항목"
-        body = str((item.get("fields") or {}).get("discussed") or "")[:40]
+        who = (item.get("fields") or {}).get(child.title_field) or item.get("title") or "항목"
+        body = str((item.get("fields") or {}).get(body_field(child)) or "")[:40]
         choices = f" ({', '.join(names)} 중에서 알려 주세요)" if names else ""
         made.append(
             {
@@ -207,12 +236,48 @@ def _link_gaps(slots: dict[str, Any], active: list[Any], gaps: list[Gap]) -> lis
     return made
 
 
+GENERIC_LABEL_WORDS = {"주요", "현재", "관련", "사항", "내용", "방법", "향후"}
+
+
+def _label_asked(label: str, asked: str) -> bool:
+    """질문 문장에 그 항목 이름의 낱말이 하나라도 있으면 이미 묻는 것으로 본다('프로젝트명' ↔ '어느 프로젝트에서')."""
+    words = {re.sub(r"명$", "", w) for w in re.split(r"[\s·/,()]+|및", label)}
+    return any(w in asked for w in words if len(w) >= 2 and w not in GENERIC_LABEL_WORDS)
+
+
+def _missing_field_gaps(slots: dict[str, Any], active: list[Any], gaps: list[Gap]) -> list[Gap]:
+    """양식의 필수 항목이 비어 있는데 그 항목을 묻는 질문이 없으면 코드가 질문을 만든다(모델이 빠뜨려도 양식의 모든 칸을 묻게)."""
+    made: list[Gap] = []
+    for spec in active:
+        for item in (slots.get(spec.key) or {}).get("items", []):
+            asked = " ".join(g.get("question", "") for g in gaps if g.get("item_id") == item.get("id"))
+            labels = [spec.label(key) for key in missing_fields(spec, item)]
+            labels = [label for label in labels if not _label_asked(label, asked)]
+            if not labels:
+                continue
+            name = item_label(spec, item)
+            made.append(
+                {
+                    "id": new_id("gap"),
+                    "slot": spec.key,
+                    "item_id": item["id"],
+                    "description": f"'{name}'의 {', '.join(labels)} 비어 있음",
+                    "question": f"'{name}'의 {', '.join(labels)}을(를) 알려 주세요.",
+                    "priority": 2,
+                    "ask_for_document": False,
+                    "status": "open",
+                }
+            )
+    return made
+
+
 def collect_gaps(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     gaps: list[Gap] = []
     active = slots_for(state.get("profile"))
     for key in (s.key for s in active):
         gaps.extend(copy.deepcopy((state.get("slots") or {}).get(key, {}).get("proposed_gaps", [])))
-    gaps.extend(_link_gaps(state.get("slots") or {}, active, gaps))  # 어느 프로젝트·세부 업무인지 맞출 수 없는 항목은 묻는다
+    gaps.extend(_link_gaps(state.get("slots") or {}, active, gaps))  # 어느 프로젝트인지 맞출 수 없는 항목은 묻는다
+    gaps.extend(_missing_field_gaps(state.get("slots") or {}, active, gaps))  # 양식의 필수 항목이 빈 채로 남지 않게 묻는다
     ordered = open_gaps(gaps)
     try:  # 장마다 따로 만든 질문 후보에서 중복을 뺀다(순서는 아래에서 양식의 장 순서로 정한다)
         order, drops = runtime.context.engine.plan_questions(state.get("profile", {}), ordered)
@@ -315,7 +380,7 @@ def choose_next(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, 
         return {"next_action": "ask"}
     ack = state.get("ack") or ""
     if remaining:
-        text = "주요 질문을 모두 드렸어요. 남은 내용은 문서의 '확인 필요 사항'에 표시하고 인수인계서를 작성할게요."
+        text = "주요 질문을 모두 드렸어요. 남은 내용은 화면 오른쪽 '확인 필요 사항'에 표시하고 인수인계서를 작성할게요."
     else:
         text = "필요한 정보가 모두 모였어요. 인수인계서를 작성할게요."
     done = _say("info", (ack + "\n\n" if ack else "") + text)
@@ -379,7 +444,7 @@ def skip_gap(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any
     return {
         "gaps": gaps,
         "pending": {},
-        "ack": "건너뛰었어요. 이 내용은 문서의 '확인 필요 사항'으로 남겨 둘게요.",
+        "ack": "건너뛰었어요. 이 내용은 화면 오른쪽 '확인 필요 사항'으로 남겨 둘게요.",
         "last_intent": "skip",
         "transcript": [user],
     }
@@ -616,6 +681,7 @@ def reanalyze(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
         seen = {g.get("question") for g in kept}
         fresh = [g for g in results[key].gaps if g.get("question") not in seen]
         gaps = kept + fresh
+    gaps += _missing_field_gaps(slots, [s for s in slots_for(state.get("profile")) if s.key in slots], gaps)  # 재분석 뒤에도 빈 필수 항목은 묻는다
 
     asked = next((g for g in previous if g["id"] == state.get("current_gap_id") and g.get("status") == "asked"), None)
     for g in gaps:  # 답을 기다리던 질문은 새 분석 결과와 함께 다시 고른다

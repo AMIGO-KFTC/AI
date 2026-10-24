@@ -17,7 +17,7 @@ def test_full_flow_stage_1_to_4(kb_ordered):
 
     stages = [e["stage"] for e in seen if e["type"] == "stage"]
     assert stages[:2] == ["analyzing", "summary"]
-    assert {e["key"] for e in seen if e["type"] == "slot"} == {"overview", "regular", "irregular", "stakeholders", "systems", "dept_notes"}
+    assert {e["key"] for e in seen if e["type"] == "slot"} == {"overview", "regular", "partners", "irregular", "stakeholders", "systems", "dept_notes"}
     assert kinds(result) == ["summary", "question"]
     snap = result.snapshot
     assert snap["waiting"] and snap["stage"] == "qna" and snap["question_count"] == 1
@@ -58,13 +58,12 @@ def test_full_flow_stage_1_to_4(kb_ordered):
     version = snap["document_version"]
     doc = snap["document"]
     assert doc.startswith("# 업무 인수인계서")
-    for heading in ("## 1. 업무 단위 요약 + 일정 명세표", "## 2. 정기업무", "## 3. 비정기 업무(프로젝트성)", "## 4. 시스템 접근 권한", "## 5. 부서별 추가 자료", "## 6. 확인 필요 사항", "## 7. 근거 자료"):
+    for heading in ("## 1. 업무 단위 요약 + 일정 명세표", "## 2. 정기업무", "## 3. 비정기 업무(프로젝트성)", "## 4. 시스템 접근 권한", "## 5. 부서별 추가 자료"):
         assert heading in doc
+    assert "## 6." not in doc and "확인 필요 사항" not in doc and "근거 자료" not in doc  # 양식(A~E)에 없는 장은 싣지 않는다
     assert "## 1. 업무 개요" not in doc and "비정기 업무 협업관계 및 협의사항\n" not in doc  # 개요 장도, 협업관계 별도 장도 없다
-    assert "CD공동망 고도화" in doc  # 맞는 프로젝트가 없는 협업관계는 '프로젝트 미지정'으로 모아 보인다
     assert "내선 2345" in doc
-    assert "인계자 답변" in doc
-    assert "(인계자 미확인)" in doc  # 건너뛴 질문은 확인 필요 사항으로 남는다
+    assert any(g["status"] == "skipped" for g in snap["gaps"])  # 건너뛴 질문은 문서가 아니라 화면의 확인 필요 사항(질문 목록)에 남는다
 
     # 검토 의견 → 문서 재작성(v2)
     result = agent.send_message("s1", "Google Analytics 권한은 기존 담당자가 직접 이관해 줍니다", kb)
@@ -208,7 +207,7 @@ def test_file_upload_keeps_question_order(kb):
     assert asked.split("\n\n")[-1] in after.messages[-1]["content"]  # 방금 물은 질문을 다시 묻는다
     assert after.snapshot["question_count"] == count  # 같은 질문이라 번호는 그대로
     remaining = [g["question"] for g in open_gaps(after.snapshot["gaps"])]
-    assert remaining == [q for q in order if q in remaining]  # 남은 질문의 순서가 그대로
+    assert [q for q in remaining if q in order] == [q for q in order if q in remaining]  # 원래 있던 질문끼리의 순서는 그대로(새 자료로 생긴 질문은 자기 장 자리에 끼어든다)
     assert all(g.get("rank") is not None for g in open_gaps(after.snapshot["gaps"]))
 
 

@@ -54,7 +54,7 @@ class Gap(TypedDict, total=False):
     priority: int  # 1(높음) ~ 3(낮음)
     rank: int  # 질문 계획(Claude)이 정한 전체 순서. 없으면 priority·장 순서로 정렬
     ask_for_document: bool
-    link_field: str  # 협업관계·비상 대응 항목이 어느 프로젝트·세부 업무인지 묻는 질문이면 그 연결 필드 키(답변이 이 필드 값이 된다)
+    link_field: str  # 협업관계 항목이 어느 프로젝트인지 묻는 질문이면 그 연결 필드 키(답변이 이 필드 값이 된다)
     note_topic: str  # 부서별 특이사항을 확인하는 질문이면 그 특이사항 이름(답변이 이 이름의 항목이 된다)
     status: str  # open | asked | answered | resolved | skipped
 
@@ -117,8 +117,18 @@ def evaluate_coverage(spec: SlotSpec, items: list[SlotItem]) -> str:
 
 
 def missing_fields(spec: SlotSpec, item: SlotItem) -> list[str]:
+    """비어 있는 필수 필드. 조건부 필수 필드(required_when)는 조건이 맞을 때만 센다(조건 필드가 비어 있으면 아직 묻지 않는다)."""
     fields = item.get("fields") or {}
-    return [key for key in spec.required if not str(fields.get(key, "")).strip()]
+    conditions = {key: (when, values) for key, when, values in spec.required_when}
+
+    def needed(key: str) -> bool:
+        if key not in conditions:
+            return True
+        when, values = conditions[key]
+        actual = str(fields.get(when, ""))
+        return any(v in actual for v in values)
+
+    return [key for key in spec.required if needed(key) and not str(fields.get(key, "")).strip()]
 
 
 def combine_coverage(rule: str, judged: str | None) -> str:
@@ -253,7 +263,7 @@ def upsert_item(
     if title and spec.title_field not in clean:
         clean[spec.title_field] = title.strip()
     # 협의 상대는 제목이 부분적으로 겹쳐도('재무팀' ⊂ '재무팀 박지훈') 다른 사람일 수 있어 정확히 같을 때만 같은 항목으로 본다(같은 상대는 parties.py 가 합친다)
-    existing = find_item(items, item_id=item_id, title=title or clean.get(spec.title_field, ""), fuzzy=spec.key != "stakeholders")
+    existing = find_item(items, item_id=item_id, title=title or clean.get(spec.title_field, ""), fuzzy=not spec.embed_into)  # 협업관계 표는 사람마다 한 행이라 비슷한 이름끼리 합치지 않는다
     if existing is None:
         existing = {
             "id": new_id(spec.key),

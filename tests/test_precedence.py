@@ -142,7 +142,7 @@ def test_offline_pipeline_applies_precedence_between_documents():
     assert team["fields"]["discussed"] == "내선 2222"
     assert team["conflicts"] and team["conflicts"][0]["dropped"] == "내선 1111"
     doc = agent.finish("p1", kb).snapshot["document"]
-    assert "협의내용: 내선 2222" in doc and "내선 1111" not in doc  # 문서에는 적용한 값만 쓴다(프로젝트를 맞출 수 없어 확인 필요 사항에 올라간다)
+    assert "내선 1111" not in doc  # 문서에는 적용한 값만 쓴다
     assert "자동으로 처리한 정보 충돌" not in doc
 
 
@@ -170,6 +170,8 @@ def test_render_shows_only_applied_value_without_conflict_list():
     put(slot, "내선 1111", {**OFFICIAL, "created_at": "2026-09-01"}, label="공식 문서")
     put(slot, "내선 2222", {**MINUTES, "created_at": "2026-10-01"}, label="회의록")
     assert slot["items"][0]["conflicts"]  # 처리 내역은 상태에 남는다
+    slot["items"][0]["fields"]["project"] = "리뉴얼"  # 문서에는 프로젝트 카드 안에 들어가는 협업관계만 싣는다
+    slots["irregular"]["items"] = [{"id": "i1", "title": "리뉴얼", "fields": {"name": "리뉴얼"}, "citations": []}]
     md = render_document(**base)
     assert "내선 1111" in md and "내선 2222" not in md  # 문서에는 적용한 값만 쓴다
     assert "자동으로 처리한 정보 충돌" not in md

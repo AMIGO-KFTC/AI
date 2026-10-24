@@ -34,7 +34,7 @@ def _words(text: str) -> set[str]:
 ENDING_BIGRAMS = {"니다", "입니", "습니", "합니", "됩니", "있습", "없습", "했습", "었습", "였습", "아요", "어요", "여요", "해요", "세요", "에요", "예요", "이에", "이예", "이다", "했다", "한다", "된다", "있다", "없다"}
 
 
-def _bigrams(text: str) -> set[str]:
+def bigrams(text: str) -> set[str]:
     chars = re.sub(r"[^가-힣A-Za-z0-9]", "", (text or "").lower())
     return {chars[i : i + 2] for i in range(len(chars) - 1)} - ENDING_BIGRAMS
 
@@ -79,7 +79,7 @@ def off_topic_reason(text: str, gap: Gap | None, item_title: str = "") -> str | 
 
 def grounded_updates(updates: list[dict[str, Any]], text: str) -> list[dict[str, Any]]:
     """모델이 정리한 값 중 인계자의 말(또는 자료 근거)에서 나온 값만 남긴다. 값이 하나도 안 남은 항목은 뺀다."""
-    spoken = _bigrams(text)
+    spoken = bigrams(text)
     kept: list[dict[str, Any]] = []
     for update in updates:
         if update.get("citations"):  # 검색한 자료를 근거로 쓴 항목은 말에 없어도 된다
@@ -90,7 +90,7 @@ def grounded_updates(updates: list[dict[str, Any]], text: str) -> list[dict[str,
             value = str(value or "").strip()
             if not value:
                 continue
-            grams = _bigrams(value)
+            grams = bigrams(value)
             numbers = set(re.findall(r"\d+", value))
             if not grams or len(grams & spoken) >= max(1, round(len(grams) * 0.25)) or (numbers and numbers & set(re.findall(r"\d+", text))):
                 fields[key] = value
