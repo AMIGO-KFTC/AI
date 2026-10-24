@@ -4,6 +4,7 @@ from .agent import AgentStateError, HandoverAgent, TurnResult
 from .config import DEFAULT_MODEL, AgentConfig
 from .graph import build_graph
 from .llm import LLMError
+from .qa import QAScope, answer_from_materials
 from .render import render_document
 from .template import COVERAGE_LABELS, SLOT_BY_KEY, SLOTS, STAGE_LABEL, STAGE_NUMBER, SlotSpec
 
@@ -16,12 +17,14 @@ __all__ = [
     "DEFAULT_MODEL",
     "HandoverAgent",
     "LLMError",
+    "QAScope",
     "SLOTS",
     "SLOT_BY_KEY",
     "STAGE_LABEL",
     "STAGE_NUMBER",
     "SlotSpec",
     "TurnResult",
+    "answer_from_materials",
     "build_graph",
     "render_document",
 ]
