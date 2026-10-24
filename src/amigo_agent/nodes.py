@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date
@@ -28,7 +29,7 @@ from .engine.offline import OfflineEngine
 from .kb import KBAdapter
 from .parties import consolidate_parties, remap_ids
 from .questions import keep_order, rank_by_slot_order
-from .relevance import grounded_updates, off_topic_reason
+from .relevance import grounded_updates, is_explicit_skip, off_topic_reason
 from .llm import LLMError, LLMOutputError
 from .precedence import RANK_USER, now_ts
 from .render import render_document, unlinked_children
@@ -388,6 +389,18 @@ def route_after_skip(state: AgentState) -> Literal["choose_next", "wait_user"]:
     return "wait_user" if state.get("stage") == "review" else "choose_next"
 
 
+SKIP_ACK = "건너뛰었어요. '확인 필요 사항'으로 남겨 둘게요."
+MOVING_ON_RE = re.compile(r"넘어가|다음 질문|건너뛰|건너뛸")
+REASK_HINT = "답하기 어려우시면 '모르겠어요'라고 하시거나 건너뛰기를 눌러 주세요."
+
+
+def _reask(user_turn: Turn, current: Gap, gaps: list[Gap], pending: dict[str, Any], lead: str) -> dict[str, Any]:
+    """기록하지도 건너뛰지도 않고 같은 질문을 다시 묻는다(질문 번호·상태는 그대로)."""
+    current["reasked"] = int(current.get("reasked", 0)) + 1
+    reply = f"{lead}\n\n{current.get('question', '')}\n\n{REASK_HINT}"
+    return {"last_intent": "other", "transcript": [user_turn, _say("info", reply, quick_replies=QUICK_REPLIES_QNA, gap_id=current["id"])], "gaps": gaps, "pending": pending}
+
+
 def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     ctx = runtime.context
     raw_text = str((state.get("event") or {}).get("text", "")).strip()
@@ -421,19 +434,17 @@ def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
             # 맞다고 하면서 정리한 내용을 그대로 되돌려 준 경우: 새 정보가 아니므로 확정으로 처리한다.
             result = Interpretation(intent="confirm", reply=result.reply, resolved_gap_ids=result.resolved_gap_ids)
 
+    if stage != "review" and current and result.intent == "skip" and not is_explicit_skip(text):
+        # 모델이 '모름'으로 보고 건너뛰려 해도, 인계자가 모른다·건너뛴다고 분명히 말하지 않았으면('ㅇㅇ'·'음') 건너뛰지 않고 다시 묻는다.
+        return _reask(user_turn, current, gaps, pending, "말씀하신 내용만으로는 답을 알 수 없어서 넘어가지 않았어요. 다시 여쭤볼게요.")
+
     if stage != "review" and current and result.intent in ("answer", "correct") and result.updates and not current.get("link_field"):
         # 모델이 답으로 정리했더라도 질문과 상관없는 말이거나 인계자의 말에 근거가 없는 값이면 기록하지 않는다(코드로 한 번 더 검사).
         item = find_item((slots.get(current.get("slot", "")) or {}).get("items", []), item_id=current.get("item_id", ""))
         reason = off_topic_reason(text, current, item_label(SLOT_BY_KEY[current["slot"]], item) if item else "")
         grounded = [] if reason else grounded_updates(result.updates, text)
         if not grounded:
-            current["reasked"] = int(current.get("reasked", 0)) + 1
-            reply = (
-                "말씀하신 내용이 이 질문과 관련 있는 답으로 보이지 않아 기록하지 않았어요. 다시 여쭤볼게요.\n\n"
-                f"{current.get('question', '')}\n\n"
-                "답하기 어려우시면 '모르겠어요'라고 하시거나 건너뛰기를 눌러 주세요."
-            )
-            return {"last_intent": "other", "transcript": [user_turn, _say("info", reply, quick_replies=QUICK_REPLIES_QNA, gap_id=current["id"])], "gaps": gaps, "pending": pending}
+            return _reask(user_turn, current, gaps, pending, "말씀하신 내용이 이 질문과 관련 있는 답으로 보이지 않아 기록하지 않았어요. 다시 여쭤볼게요.")
         result.updates = grounded
 
     out: dict[str, Any] = {"last_intent": result.intent, "transcript": [user_turn]}
@@ -451,7 +462,8 @@ def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
     if intent == "skip" and stage != "review":
         if current:
             current["status"] = "skipped"
-        out.update(gaps=gaps, pending={}, ack=result.reply or "건너뛰었어요. '확인 필요 사항'으로 남겨 둘게요.")
+        # 모델이 만든 문장에는 새 질문이 섞일 수 있어(한 메시지에 질문 두 개) 정해진 문구만 쓴다.
+        out.update(gaps=gaps, pending={}, ack=SKIP_ACK)
         return out
 
     if intent == "confirm" and not result.updates:
@@ -499,10 +511,13 @@ def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
     # 되묻기·잡담·해석 불가: 답한 뒤 같은 질문에 대한 답을 기다린다. 질문이 있는 단계에서는 질문을 다시 보여 주고, 건너뛰는 방법도 알려 준다.
     reply = result.reply or "말씀하신 내용을 정확히 이해하지 못했어요. 조금 더 구체적으로 알려 주시겠어요?"
     if stage != "review" and current and result.intent == "other":
+        # 모델 문장이 '다음 질문으로 넘어가겠습니다'처럼 사실과 다르거나 질문을 자기 말로 바꿔 다시 물으면(질문이 두 번 나옴) 정해진 문구로 바꾼다
+        if MOVING_ON_RE.search(reply) or "?" in reply:
+            reply = "말씀하신 내용만으로는 답을 알 수 없어서 넘어가지 않았어요. 다시 여쭤볼게요."
         question = current.get("question", "")
         if question and question not in reply:  # 모델이 이미 질문을 다시 물었으면 질문은 덧붙이지 않는다
             reply += f"\n\n{question}"
-        reply += "\n\n답하기 어려우시면 '모르겠어요'라고 하시거나 건너뛰기를 눌러 주세요."
+        reply += f"\n\n{REASK_HINT}"
     out["transcript"].append(_say("info", reply, quick_replies=QUICK_REPLIES_QNA if stage != "review" else []))
     return out
 

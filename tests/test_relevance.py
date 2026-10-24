@@ -95,3 +95,80 @@ def test_claude_misreading_an_unrelated_message_as_an_answer_is_caught_by_the_co
     result = agent.send_message("rl3", "저는 오늘 점심에 김치찌개를 먹었어요", kb)  # 모델은 답으로 정리하지만 값이 말에 근거가 없다
     assert [m["kind"] for m in result.messages] == ["info"] and "기록하지 않았어요" in result.messages[0]["content"]
     assert not any("오로라" in str(it["fields"]) for it in result.snapshot["slots"]["stakeholders"]["items"])
+
+
+@pytest.mark.parametrize("text", ["모르겠어요 (건너뛰기)", "몰라요", "잘 모르겠습니다", "건너뛸게요", "패스", "해당 없음", "없어요", "기억이 안 나요", "다음 질문으로 넘어가 주세요"])
+def test_explicit_skip_expressions(text):
+    from amigo_agent.relevance import is_explicit_skip
+
+    assert is_explicit_skip(text)
+
+
+@pytest.mark.parametrize("text", ["ㅇㅇ", "음", "네", "글쎄", "ㅋㅋ", "흠..."])
+def test_vague_words_are_not_a_skip(text):
+    from amigo_agent.relevance import is_explicit_skip
+
+    assert not is_explicit_skip(text)
+
+
+def _skipping_agent():
+    """무엇이든 '모름(skip)'으로 판단하고, 건너뛰는 응답에 자기 질문을 끼워 넣는 모델(가짜)."""
+    from amigo_agent import AgentConfig
+    from amigo_agent.engine import Interpretation
+
+    agent = HandoverAgent(AgentConfig(llm_mode="offline"))
+    agent.engine.interpret = lambda data, kb_: Interpretation("skip", reply="알겠습니다. 그럼 지어낸 다른 질문은 무엇인가요?")
+    return agent
+
+
+def test_model_skip_for_a_vague_word_is_turned_into_asking_again(kb_ordered):
+    kb = kb_ordered
+    agent = _skipping_agent()
+    first = agent.start("sk1", PROFILE, kb)
+    gap_id, count = first.messages[-1]["meta"]["gap_id"], first.snapshot["question_count"]
+    for text in ("ㅇㅇ", "음"):
+        result = agent.send_message("sk1", text, kb)
+        assert [m["kind"] for m in result.messages] == ["info"] and "넘어가지 않았어요" in result.messages[0]["content"]
+        snap = result.snapshot
+        assert {g["id"]: g["status"] for g in snap["gaps"]}[gap_id] == "asked" and snap["current_gap_id"] == gap_id and snap["question_count"] == count
+
+
+def test_explicit_skip_still_skips_with_a_fixed_message_and_no_invented_question(kb_ordered):
+    kb = kb_ordered
+    agent = _skipping_agent()
+    gap_id = agent.start("sk2", PROFILE, kb).messages[-1]["meta"]["gap_id"]
+    result = agent.send_message("sk2", "모르겠어요 (건너뛰기)", kb)
+    assert {g["id"]: g["status"] for g in result.snapshot["gaps"]}[gap_id] == "skipped"
+    text = result.messages[-1]["content"]
+    assert text.startswith("건너뛰었어요. '확인 필요 사항'으로 남겨 둘게요.") and "지어낸 다른 질문" not in text  # 모델이 끼워 넣은 질문은 쓰지 않는다
+
+
+def test_model_saying_it_moves_on_while_staying_is_replaced(kb_ordered):
+    """모델이 '다음 질문으로 넘어가겠습니다'라고 해도 실제로는 같은 질문에 머무므로 그 문장을 쓰지 않는다."""
+    from amigo_agent import AgentConfig
+    from amigo_agent.engine import Interpretation
+
+    kb = kb_ordered
+    agent = HandoverAgent(AgentConfig(llm_mode="offline"))
+    agent.engine.interpret = lambda data, kb_: Interpretation("other", reply="알겠습니다. 그럼 다음 질문으로 넘어가겠습니다.")
+    gap_id = agent.start("mv", PROFILE, kb).messages[-1]["meta"]["gap_id"]
+    result = agent.send_message("mv", "ㅋㅋ", kb)
+    text = result.messages[-1]["content"]
+    assert "다음 질문으로 넘어가겠습니다" not in text and "넘어가지 않았어요" in text
+    assert result.snapshot["current_gap_id"] == gap_id
+
+
+def test_model_rephrasing_the_question_is_replaced_so_only_one_question_shows(kb_ordered):
+    from amigo_agent import AgentConfig
+    from amigo_agent.engine import Interpretation
+
+    kb = kb_ordered
+    agent = HandoverAgent(AgentConfig(llm_mode="offline"))
+    agent.engine.interpret = lambda data, kb_: Interpretation("other", reply="다시 말씀해 주시겠어요? 계획 기간이 궁금합니다.")
+    first = agent.start("rp", PROFILE, kb)
+    text = agent.send_message("rp", "ㅇㅇ", kb).messages[-1]["content"]
+    assert "다시 말씀해 주시겠어요" not in text and text.count("넘어가지 않았어요") == 1
+    friendly = HandoverAgent(AgentConfig(llm_mode="offline"))
+    friendly.engine.interpret = lambda data, kb_: Interpretation("other", reply="편하신 때에 답해 주셔도 괜찮아요.")
+    friendly.start("rp2", PROFILE, kb)
+    assert friendly.send_message("rp2", "ㅋㅋ", kb).messages[-1]["content"].startswith("편하신 때에 답해 주셔도 괜찮아요.")  # 질문이 없는 짧은 응답은 그대로 쓴다
