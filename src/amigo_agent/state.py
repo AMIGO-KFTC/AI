@@ -49,6 +49,7 @@ class Gap(TypedDict, total=False):
     id: str
     slot: str
     item_id: str
+    field: str  # 묻는 빈 칸(필드 키). 장에 항목이 없어 항목 자체를 묻는 질문이면 빈 문자열
     description: str
     question: str
     priority: int  # 1(높음) ~ 3(낮음)
@@ -56,7 +57,6 @@ class Gap(TypedDict, total=False):
     ask_for_document: bool
     link_field: str  # 협업관계 항목이 어느 프로젝트인지 묻는 질문이면 그 연결 필드 키(답변이 이 필드 값이 된다)
     note_topic: str  # 부서별 특이사항을 확인하는 질문이면 그 특이사항 이름(답변이 이 이름의 항목이 된다)
-    followup_of: str  # 앞 답변에서 빠진 요소를 묻는 보충 질문이면 원래 질문 id(보충 질문은 한 번만)
     status: str  # open | asked | answered | resolved | skipped
 
 
@@ -87,6 +87,7 @@ class AgentState(TypedDict, total=False):
     transcript: Annotated[list[Turn], operator.add]
     question_count: int
     finish_requested: bool
+    resume_review: str  # 문서 검토 중 고른 질문 id. 그 질문에 답하거나 건너뛰면 바로 문서를 다시 만든다
     doc_dirty: bool
     document: str
     document_version: int

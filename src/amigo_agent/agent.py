@@ -115,7 +115,10 @@ class HandoverAgent:
         return self._resume(thread_id, {"type": "skip"}, kb, on_event)
 
     def reopen_question(self, thread_id: str, gap_id: str, kb: Any, on_event: EventHandler | None = None) -> TurnResult:
-        """이미 답했거나 건너뛴 질문으로 돌아가 그 질문을 다시 묻는다(질의응답 STAGE 3 에서만).
+        """고른 질문으로 이동해 그 질문을 묻는다(이미 답했거나 건너뛴 질문, 아직 묻지 않은 질문 모두).
+
+        질의응답(STAGE 3)과 문서 검토(STAGE 4) 모두에서 된다. 검토 중에 돌아왔으면 그 질문에 답한(또는 건너뛴) 뒤
+        바로 인수인계서를 다시 만든다(resume_review).
 
         지금 묻고 있던 질문은 순서를 기다리도록 되돌리고, 다시 새로 답하면 앞의 답을 덮어쓴다(인계자 최신 답변이 우선: precedence.py).
         체크포인트를 '다음 질문 고르기' 직후로 옮겨 ask 노드를 다시 돌리는 방식이라 다른 노드는 건드리지 않는다.
@@ -127,28 +130,36 @@ class HandoverAgent:
                 raise AgentStateError("이전 작업이 끝나지 않았습니다. 잠시 후 다시 시도하거나 '다시 시도'를 눌러 주세요.")
             config = self._config(thread_id)
             values = self.graph.get_state(config).values or {}
-            if values.get("stage") != "qna":
-                raise AgentStateError("질의응답 중에만 이전 질문으로 돌아갈 수 있습니다.")
+            stage = values.get("stage")
+            if stage not in ("qna", "review"):
+                raise AgentStateError("질의응답이나 문서 검토 중에만 질문으로 돌아갈 수 있습니다.")
             gaps = copy.deepcopy(values.get("gaps") or [])
             target = next((g for g in gaps if g.get("id") == gap_id), None)
             if target is None:
                 raise AgentStateError("돌아갈 질문을 찾지 못했습니다.")
-            if target.get("status") not in ("answered", "resolved", "skipped"):
-                raise AgentStateError("아직 답하지 않은 질문이라 돌아갈 수 없습니다.")
+            movable = ("answered", "resolved", "skipped", "open") + (("asked",) if stage == "review" else ())  # 검토 중에는 문서 생성 때 묻던 질문도 고를 수 있다
+            if target.get("status") not in movable:
+                raise AgentStateError("지금 묻고 있는 질문입니다.")
+            answered_before = target.get("status") not in ("open", "asked")
             for g in gaps:
                 if g.get("status") == "asked":
                     g["status"] = "open"  # 지금 묻던 질문은 이 질문 다음에 다시 묻는다
             slot = (values.get("slots") or {}).get(target.get("slot", "")) or {}
             item = next((it for it in slot.get("items", []) if it.get("id") == target.get("item_id")), None)
             overwrite = [k for k, meta in ((item or {}).get("field_meta") or {}).items() if meta.get("rank") == RANK_USER and str(((item or {}).get("fields") or {}).get(k, "")).strip()]
-            target.update(status="open", reopened=True, reopen_fields=overwrite)  # 새 답은 인계자가 앞서 적은 칸을 고치는 답으로 처리한다
+            target.update(status="open", reopened=answered_before, reopen_fields=overwrite if answered_before else [])  # 새 답은 인계자가 앞서 적은 칸을 고치는 답으로 처리한다
             target["rank"] = min((g.get("rank", 10_000) for g in gaps), default=10_000) - 1  # open_gaps 의 맨 앞으로
             self.graph.update_state(
                 config,
                 {
                     "gaps": gaps,
                     "pending": {},
-                    "ack": "이전 질문으로 돌아왔어요. 새로 답해 주시면 앞의 답을 그 내용으로 고칠게요.",
+                    "ack": (
+                        "고르신 질문으로 이동했어요. "
+                        + ("새로 답해 주시면 앞의 답을 그 내용으로 고칠게요." if answered_before else "답해 주시면 문서에 반영할게요.")
+                        + (" 답하신 뒤 인수인계서를 다시 만들게요." if stage == "review" else "")
+                    ),
+                    "resume_review": gap_id if stage == "review" else "",
                     "question_count": sum(1 for g in gaps if g.get("status") in ("answered", "resolved", "skipped")),  # ask 가 +1 하므로 '지난 질문 수 + 1' 번이 된다
                     "next_action": "ask",
                     "last_intent": "reopen",

@@ -255,11 +255,13 @@ def _missing_field_gaps(slots: dict[str, Any], active: list[Any], gaps: list[Gap
     made: list[Gap] = []
     for spec in active:
         for item in (slots.get(spec.key) or {}).get("items", []):
-            asked = " ".join(g.get("question", "") for g in gaps if g.get("item_id") == item.get("id"))
+            mine = [g for g in gaps if g.get("item_id") == item.get("id")]
+            asked = " ".join(g.get("question", "") for g in mine if not g.get("field"))  # 칸이 적히지 않은 예전 질문은 문장으로 맞춘다
+            asked_fields = {g.get("field") for g in mine if g.get("field")}
             name = item_label(spec, item)
             for key in missing_fields(spec, item):
                 label = spec.label(key)
-                if _label_asked(label, asked):
+                if key in asked_fields or _label_asked(label, asked):
                     continue
                 example = first_ask_example(spec.key, key)
                 question = f"'{name}'의 {label}에 대해 여쭤볼게요. {example}" if example else f"'{name}'의 {label}{_object_particle(label)} 알려 주시겠어요?"
@@ -268,6 +270,7 @@ def _missing_field_gaps(slots: dict[str, Any], active: list[Any], gaps: list[Gap
                         "id": new_id("gap"),
                         "slot": spec.key,
                         "item_id": item["id"],
+                        "field": key,
                         "description": f"'{name}'의 {label} 비어 있음",
                         "question": question,
                         "priority": 2,
@@ -278,11 +281,19 @@ def _missing_field_gaps(slots: dict[str, Any], active: list[Any], gaps: list[Gap
     return made
 
 
+def in_scope(gap: Gap) -> bool:
+    """장의 질문 범위(SlotSpec.ask_scope) 안의 질문인지. 업무 단위 요약은 일정만 묻는다(진행상황은 정기·비정기 업무 장에서 다룬다)."""
+    spec = SLOT_BY_KEY.get(gap.get("slot", ""))
+    if spec is None or not spec.ask_scope or gap.get("link_field"):
+        return True
+    return bool(re.search(spec.ask_scope, f"{gap.get('question', '')} {gap.get('description', '')}"))
+
+
 def collect_gaps(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     gaps: list[Gap] = []
     active = slots_for(state.get("profile"))
     for key in (s.key for s in active):
-        gaps.extend(copy.deepcopy((state.get("slots") or {}).get(key, {}).get("proposed_gaps", [])))
+        gaps.extend(g for g in copy.deepcopy((state.get("slots") or {}).get(key, {}).get("proposed_gaps", [])) if in_scope(g))
     gaps.extend(_link_gaps(state.get("slots") or {}, active, gaps))  # 어느 프로젝트인지 맞출 수 없는 항목은 묻는다
     gaps.extend(_missing_field_gaps(state.get("slots") or {}, active, gaps))  # 양식의 필수 항목이 빈 채로 남지 않게 묻는다
     ordered = open_gaps(gaps)
@@ -382,6 +393,14 @@ def summarize(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
 def choose_next(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     if state.get("finish_requested"):
         return {"next_action": "compose"}
+    resume = state.get("resume_review") or ""
+    if resume:  # 문서 검토 중 고른 질문에 답(또는 건너뜀)했으면 남은 질문 없이 바로 문서를 다시 만든다
+        target = next((g for g in state.get("gaps") or [] if g.get("id") == resume), None)
+        if target is not None and target.get("status") in ("open", "asked"):
+            return {"next_action": "ask"}
+        ack = state.get("ack") or ""
+        done = _say("info", (ack + "\n\n" if ack else "") + "고친 내용으로 인수인계서를 다시 만들게요.")
+        return {"next_action": "compose", "ack": "", "resume_review": "", "transcript": [done]}
     remaining = open_gaps(state.get("gaps") or [])
     if remaining:  # 질문 수는 제한하지 않는다(남은 질문을 모두 묻는다)
         return {"next_action": "ask"}
@@ -560,9 +579,6 @@ def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
         for g in gaps:
             if g["id"] in resolved and g.get("status") in ("asked", "open"):
                 g["status"] = "answered"
-        follow = _followup_gap(result, current, gaps, refs) if stage != "review" else None
-        if follow:
-            gaps.append(follow)
         out.update(slots={k: slots[k] for k in {r[0] for r in refs}}, gaps=gaps)
         if stage == "review":
             out["transcript"].append(_say("info", result.reply or "말씀하신 내용을 반영해서 문서를 다시 작성할게요."))
@@ -573,10 +589,8 @@ def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
                 # 같은 내용을 여러 번 고쳐도 확인이 끝나지 않으면 마지막 정리로 반영하고 다음 질문으로 넘어간다(무한 반복 방지).
                 out.update(pending={}, last_intent="confirm", ack="고쳐 주신 내용으로 반영해 둘게요. 문서 초안에서도 다시 고치실 수 있어요.")
                 return out
-            # 보충 질문을 만들었으면 모델의 문장 대신 정리 내용만 보여 준다(모델 문장에 보충 질문이 섞이면 같은 질문을 두 번 하게 된다)
-            reply = _summary_reply(result.updates) if follow else result.reply
             out["transcript"].append(
-                _say("confirm", reply or "정리한 내용이 맞는지 확인해 주세요.", quick_replies=QUICK_REPLIES_CONFIRM, refs=refs)
+                _say("confirm", result.reply or "정리한 내용이 맞는지 확인해 주세요.", quick_replies=QUICK_REPLIES_CONFIRM, refs=refs)
             )
             keys = {item_id: list((up.get("fields") or {}).keys()) for (_, item_id), up in zip(refs, result.updates)}
             out["pending"] = {"gap_id": current["id"] if current else "", "refs": refs, "keys": keys, "rounds": rounds}
@@ -594,44 +608,6 @@ def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
         reply += f"\n\n{REASK_HINT}"
     out["transcript"].append(_say("info", reply, quick_replies=QUICK_REPLIES_QNA if stage != "review" else []))
     return out
-
-
-def _summary_reply(updates: list[dict[str, Any]]) -> str:
-    """정리한 값을 '항목: 값' 으로 보여 주고 교차 확인을 요청하는 문장."""
-    lines = []
-    for up in updates:
-        spec = SLOT_BY_KEY.get(up.get("slot", ""))
-        for key, value in (up.get("fields") or {}).items():
-            if spec and str(value or "").strip():
-                lines.append(f"- {spec.label(key)}: {str(value).strip()}")
-    if not lines:
-        return ""
-    return "말씀하신 내용을 이렇게 정리했어요.\n" + "\n".join(lines) + "\n\n맞으면 '네', 고칠 부분이 있으면 말씀해 주세요."
-
-
-def _followup_gap(result: Interpretation, current: Gap | None, gaps: list[Gap], refs: list[list[str]]) -> Gap | None:
-    """답이 작성 가이드의 핵심 요소를 빠뜨렸으면(모델의 followup) 그 요소만 묻는 보충 질문을 바로 다음 차례로 만든다.
-
-    질문 하나에 보충 질문은 한 번만 만든다(보충 질문의 보충 질문은 만들지 않아 같은 내용을 끝없이 묻지 않는다).
-    """
-    question = (result.followup or "").strip()
-    if not question or not current or result.intent not in ("answer", "correct") or current.get("followup_of"):
-        return None
-    if any(g.get("followup_of") == current["id"] for g in gaps):
-        return None
-    item_id = next((item_id for slot_key, item_id in refs if slot_key == current.get("slot")), current.get("item_id", ""))
-    return {
-        "id": new_id("gap"),
-        "slot": current["slot"],
-        "item_id": item_id,
-        "description": f"앞 답변에서 빠진 내용: {question}",
-        "question": question,
-        "priority": 1,
-        "rank": float(current.get("rank") or 0) + 0.5,  # 지금 질문 바로 다음에 묻는다
-        "ask_for_document": False,
-        "followup_of": current["id"],
-        "status": "open",
-    }
 
 
 def _apply_updates(ctx: AgentContext, state: AgentState, slots: dict, result: Interpretation, text: str, current: Gap | None) -> list[list[str]]:
@@ -726,7 +702,7 @@ def reanalyze(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
         _emit({"type": "slot", "key": key, "slot": new})
         kept = [g for g in gaps if g.get("slot") != key or g.get("status") in ("resolved", "skipped", "answered")]
         seen = {g.get("question") for g in kept}
-        fresh = [g for g in results[key].gaps if g.get("question") not in seen]
+        fresh = [g for g in results[key].gaps if g.get("question") not in seen and in_scope(g)]
         gaps = kept + fresh
     gaps += _missing_field_gaps(slots, [s for s in slots_for(state.get("profile")) if s.key in slots], gaps)  # 재분석 뒤에도 빈 필수 항목은 묻는다
 
@@ -760,11 +736,32 @@ def route_after_reanalyze(state: AgentState) -> Literal["choose_next", "wait_use
 
 
 # =========================================================================== STAGE 4
+def _summarize_units(ctx: AgentContext, profile: dict[str, Any], slots: dict[str, Any]) -> None:
+    """업무 단위 요약의 진행상황 요약을 문서를 만들 때 지금까지 수집된 내용으로 채운다(이 칸은 질문하지 않는다).
+
+    인계자가 직접 고친 값(순위가 인계자 답변)은 그대로 둔다. 요약을 못 만들면 자료에서 읽은 값을 둔다.
+    """
+    units = (slots.get("overview") or {}).get("items") or []
+    if not units:
+        return
+    try:
+        summaries = ctx.engine.summarize_units(profile, slots)
+    except LLMError as exc:
+        logger.warning("unit summary failed, keep notes: %s", exc)
+        return
+    for item in units:
+        summary = summaries.get(item.get("id", ""))
+        meta = (item.get("field_meta") or {}).get("note") or {}
+        if summary and meta.get("rank") != RANK_USER:
+            item.setdefault("fields", {})["note"] = summary
+
+
 def compose(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     ctx = runtime.context
     _stage("composing")
     _progress("인수인계서를 작성하고 있어요.", status="running")
-    slots = state.get("slots") or {}
+    slots = copy.deepcopy(state.get("slots") or {})
+    _summarize_units(ctx, state.get("profile", {}), slots)
     version = int(state.get("document_version") or 0) + 1
     markdown = render_document(
         profile=state.get("profile", {}),
@@ -782,11 +779,13 @@ def compose(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]
         version=version,
     )
     return {
+        "slots": {"overview": slots["overview"]} if "overview" in slots else {},
         "stage": "review",
         "document": markdown,
         "document_version": version,
         "doc_dirty": False,
         "finish_requested": False,
+        "resume_review": "",
         "pending": {},
         "transcript": [note],
     }
