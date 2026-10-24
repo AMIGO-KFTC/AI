@@ -125,16 +125,19 @@ def test_files_trigger_reanalysis_and_keep_user_answers(kb_ordered):
     assert "새 자료(연락망.xlsx)를 반영했어요" in result.messages[-1]["content"]
 
 
-def test_errors_before_start_and_question_limit(kb, monkeypatch):
+def test_errors_before_start_and_no_question_limit(kb):
     agent = HandoverAgent()
     with pytest.raises(AgentStateError):
         agent.send_message("nope", "안녕하세요", kb)
-    monkeypatch.setenv("AMIGO_MAX_QUESTIONS", "1")
-    limited = HandoverAgent()
-    limited.start("s4", PROFILE, kb)
-    result = limited.skip("s4", kb)
+    # 질문 수는 제한하지 않는다: 남은 질문이 있으면 끝까지 묻는다(암묵지를 확인할 질문을 줄이지 않는다)
+    result = agent.start("s4", PROFILE, kb)
+    total = sum(1 for g in result.snapshot["gaps"] if g["status"] in ("open", "asked"))
+    for _ in range(total - 1):
+        result = agent.skip("s4", kb)
+        assert result.snapshot["stage"] == "qna"
+    result = agent.skip("s4", kb)
     assert result.snapshot["stage"] == "review"
-    assert any("주요 질문을 모두 드렸어요" in m["content"] for m in result.messages)
+    assert not any("주요 질문을 모두 드렸어요" in m["content"] for m in result.messages)
 
 
 def test_no_gaps_goes_straight_to_document():

@@ -51,7 +51,7 @@ class FakeMessages:
         if system == INTERPRET_SYSTEM:
             user = messages[0]["content"]
             if "새 메시지\n네" in user:
-                return response([text_block({"intent": "confirm", "updates": [], "resolved_gap_ids": [], "reply": "확인했습니다."})])
+                return response([text_block({"intent": "confirm", "updates": [], "resolved_gap_ids": [], "followup": "", "reply": "확인했습니다."})])
             gap_id = re.search(r"- id: (gap-\w+)", user).group(1)
             item_id = re.search(r"id=(stakeholders-\w+) \| 재무팀", user).group(1)
             return response(
@@ -63,6 +63,7 @@ class FakeMessages:
                                 {"slot": "stakeholders", "item_id": item_id, "title": "재무팀", "fields": [{"key": "project", "value": "홈페이지 리뉴얼"}], "evidence_ids": []}
                             ],
                             "resolved_gap_ids": [gap_id],
+                            "followup": "",
                             "reply": "재무팀과의 협의를 '홈페이지 리뉴얼' 프로젝트로 정리했어요. 맞으면 '네', 고칠 부분이 있으면 말씀해 주세요.",
                         }
                     )
