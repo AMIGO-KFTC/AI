@@ -40,7 +40,6 @@ class Interpretation:
     updates: list[dict[str, Any]] = field(default_factory=list)  # {"slot","item_id","title","fields","citations"}
     resolved_gap_ids: list[str] = field(default_factory=list)
     reply: str = ""
-    followup: str = ""  # 답이 작성 가이드의 핵심 요소를 빠뜨렸을 때 그 요소만 묻는 보충 질문
 
 
 class Engine(Protocol):
@@ -51,6 +50,8 @@ class Engine(Protocol):
     def plan_questions(self, profile: dict[str, Any], gaps: list[Gap]) -> tuple[list[str], set[str]]: ...
 
     def summarize(self, profile: dict[str, Any], slots: dict[str, SlotState], gaps: list[Gap], sources: list[dict]) -> str: ...
+
+    def summarize_units(self, profile: dict[str, Any], slots: dict[str, SlotState]) -> dict[str, str]: ...
 
     def interpret(self, data: InterpretInput, kb: KBAdapter) -> Interpretation: ...
 

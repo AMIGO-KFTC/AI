@@ -22,12 +22,14 @@ from ..prompts import (
     INTERPRET_SYSTEM,
     PLAN_SYSTEM,
     SUMMARY_SYSTEM,
+    UNIT_SUMMARY_SYSTEM,
     analysis_user,
     interpret_user,
     plan_user,
     summary_user,
+    unit_summary_user,
 )
-from ..state import Gap, SlotState, combine_coverage, evaluate_coverage, new_id, upsert_item
+from ..state import Gap, SlotState, combine_coverage, evaluate_coverage, missing_fields, new_id, upsert_item
 from ..template import ALL_FIELD_KEYS, SLOT_BY_KEY, SLOT_KEYS, SlotSpec
 from ..textkit import scrub_credentials
 from . import Interpretation, InterpretInput, SlotResult, retrieve_for_slot
@@ -43,7 +45,8 @@ class GapProposal(BaseModel):
     description: str = Field(description="부족한 정보가 무엇인지 한 줄")
     question: str = Field(description="인계자에게 할 질문 한 문장(한 가지 주제만)")
     priority: Literal["high", "medium", "low"]
-    related_item_title: str = Field(description="관련 항목 제목. 장 전체에 대한 질문이면 빈 문자열")
+    related_item_title: str = Field(description="비어 있는 칸이 있는 항목의 제목. 장에 항목이 하나도 없을 때만 빈 문자열")
+    field: str = Field(description="비어 있는 필드 키(이 장의 필드 중 하나). 장에 항목이 하나도 없을 때만 빈 문자열")
     ask_for_document: bool = Field(description="파일로 받는 편이 나은 정보면 true")
 
 
@@ -90,7 +93,6 @@ class InterpretOutput(BaseModel):
     intent: Literal["answer", "confirm", "correct", "skip", "finish", "question", "other"]
     updates: list[ItemUpdate]
     resolved_gap_ids: list[str]
-    followup: str  # 답이 작성 가이드의 핵심 요소를 빠뜨렸을 때 그 요소만 묻는 보충 질문(없으면 빈 문자열)
     reply: str
 
 
@@ -108,6 +110,17 @@ class PlanOutput(BaseModel):
 class SummaryOutput(BaseModel):
     model_config = _STRICT
     message: str
+
+
+class UnitSummary(BaseModel):
+    model_config = _STRICT
+    item_id: str
+    summary: str
+
+
+class UnitSummaryOutput(BaseModel):
+    model_config = _STRICT
+    summaries: list[UnitSummary]
 
 
 def _no_relevant_message(query: str, results: list[Evidence]) -> str:
@@ -174,13 +187,20 @@ class ClaudeEngine:
             upsert_item(slot, item_id="", title=item.title, fields=fields, citations=citations, origin="document", defer=True)
         slot["coverage"] = combine_coverage(evaluate_coverage(spec, slot["items"]), output.coverage)
         gaps: list[Gap] = []
-        for proposal in output.gaps:  # 질문 후보는 모두 받는다(암묵지를 확인할 질문을 줄이지 않는다)
+        for proposal in output.gaps:
             related = next((it for it in slot["items"] if proposal.related_item_title and it.get("title") == proposal.related_item_title), None)
+            # 양식의 빈 칸만 묻는다: 항목의 비어 있는 필수 칸이거나, 장에 항목이 하나도 없을 때의 장 질문만 남기고 나머지는 버린다
+            empty_cell = related is not None and proposal.field in missing_fields(spec, related)
+            empty_slot = not slot["items"] and not proposal.related_item_title and not proposal.field and not gaps
+            if not (empty_cell or empty_slot):
+                logger.info("drop question outside empty template cells: %s", proposal.question)
+                continue
             gaps.append(
                 {
                     "id": new_id("gap"),
                     "slot": spec.key,
                     "item_id": related["id"] if related else "",
+                    "field": proposal.field if empty_cell else "",
                     "description": proposal.description,
                     "question": proposal.question,
                     "priority": _PRIORITY.get(proposal.priority, 2),
@@ -188,7 +208,7 @@ class ClaudeEngine:
                     "status": "open",
                 }
             )
-        if slot["coverage"] != "sufficient" and not gaps:
+        if not slot["items"] and not gaps:  # 장이 통째로 비었으면 이 장의 항목을 묻는다(항목의 빈 칸은 collect_gaps 가 코드로 묻는다)
             gaps.append(
                 {
                     "id": new_id("gap"),
@@ -229,6 +249,21 @@ class ClaudeEngine:
         )
         return output.message.strip()
 
+    def summarize_units(self, profile, slots) -> dict[str, str]:
+        """업무 단위 요약의 진행상황 요약을 지금까지 수집된 항목(자료 분석 + 인계자 답변)만으로 쓴다(문서를 만들 때)."""
+        units = (slots.get("overview") or {}).get("items") or []
+        if not units:
+            return {}
+        output = self.llm.structured(
+            system=UNIT_SUMMARY_SYSTEM,
+            user=unit_summary_user(profile, slots),
+            output_model=UnitSummaryOutput,
+            effort=self.config.effort_chat,
+            max_tokens=4000,
+        )
+        known = {it.get("id") for it in units}
+        return {s.item_id: s.summary.strip() for s in output.summaries if s.item_id in known and s.summary.strip()}
+
     # ------------------------------------------------------------------ STAGE 3
     def interpret(self, data: InterpretInput, kb: KBAdapter) -> Interpretation:
         registry = EvidenceRegistry()
@@ -267,7 +302,7 @@ class ClaudeEngine:
                 }
             )
         return Interpretation(
-            intent=output.intent, updates=updates, resolved_gap_ids=list(output.resolved_gap_ids), reply=output.reply.strip(), followup=output.followup.strip()
+            intent=output.intent, updates=updates, resolved_gap_ids=list(output.resolved_gap_ids), reply=output.reply.strip()
         )
 
 

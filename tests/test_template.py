@@ -26,7 +26,8 @@ def test_two_versions_have_their_own_chapters_in_template_order():
 
 def test_every_field_is_required_except_conditional_ones():
     for spec in slots_for(PROFILE) + slots_for(LEAVE):
-        assert set(spec.required) == {f.key for f in spec.fields}, spec.key  # 필수/추천 구분 없이 모두 필수
+        assert set(spec.required) == {f.key for f in spec.fields} - set(spec.auto), spec.key  # 필수/추천 구분 없이 모두 필수(자동 작성 칸만 제외)
+    assert SLOT_BY_KEY["overview"].auto == ("note",)  # 진행상황 요약은 묻지 않고 문서를 만들 때 수집된 내용으로 쓴다
     assert SLOT_BY_KEY["leave_tasks"].required_when == (("status", "task_type", ("프로젝트",)),)
 
 
@@ -146,3 +147,14 @@ def test_partner_name_holds_only_a_person_team_or_organization():
     assert [it["fields"]["name"] for it in items] == ["총무팀", "", "박지훈 차장"]
     assert items[0]["fields"]["org"] == "총무팀"
     assert "업무명·시스템명은 쓰지 않는다" in SLOT_BY_KEY["partners"].field("name").hint
+
+
+def test_unit_summary_asks_only_about_schedule_and_note_is_written_at_compose():
+    from amigo_agent.nodes import _missing_field_gaps, in_scope
+
+    item = {"id": "overview-1", "title": "공동망 운영", "fields": {"name": "공동망 운영", "period": "", "note": ""}}
+    made = _missing_field_gaps({"overview": {"items": [item]}}, [SLOT_BY_KEY["overview"]], [])
+    assert [g["description"] for g in made] == ["'공동망 운영'의 계획기간 비어 있음"]  # 진행상황 요약은 묻지 않는다
+    assert in_scope({"slot": "overview", "question": "공동망 운영은 언제부터 언제까지 진행하나요?"})
+    assert not in_scope({"slot": "overview", "question": "공동망 운영에서 최근 장애는 어떻게 처리했나요?"})  # 내용은 정기·비정기 업무 장에서
+    assert in_scope({"slot": "regular", "question": "최근 장애는 어떻게 처리했나요?"})

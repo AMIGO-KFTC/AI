@@ -9,7 +9,7 @@ import re
 from types import SimpleNamespace
 
 from amigo_agent import AgentConfig, HandoverAgent
-from amigo_agent.prompts import ANALYSIS_SYSTEM, INTERPRET_SYSTEM, SUMMARY_SYSTEM
+from amigo_agent.prompts import ANALYSIS_SYSTEM, INTERPRET_SYSTEM, SUMMARY_SYSTEM, UNIT_SUMMARY_SYSTEM
 from amigo_agent.template import SLOT_BY_KEY, SLOTS
 
 from conftest import PROFILE
@@ -46,12 +46,15 @@ class FakeMessages:
             if spec.key == "stakeholders" and isinstance(last, str):
                 return response([tool_use("재무팀 담당자 연락처")], stop="tool_use")
             return response([text_block(analysis_payload(spec, messages))])
+        if system == UNIT_SUMMARY_SYSTEM:
+            ids = re.findall(r"- id=(overview-\w+)", messages[0]["content"])
+            return response([text_block({"summaries": [{"item_id": i, "summary": "수집된 내용 기준 정상 운영 중"} for i in ids]})])
         if system == SUMMARY_SYSTEM:
             return response([text_block({"message": "자료 5건에서 홈페이지 운영 업무를 파악했어요."})])
         if system == INTERPRET_SYSTEM:
             user = messages[0]["content"]
             if "새 메시지\n네" in user:
-                return response([text_block({"intent": "confirm", "updates": [], "resolved_gap_ids": [], "followup": "", "reply": "확인했습니다."})])
+                return response([text_block({"intent": "confirm", "updates": [], "resolved_gap_ids": [], "reply": "확인했습니다."})])
             gap_id = re.search(r"- id: (gap-\w+)", user).group(1)
             item_id = re.search(r"id=(stakeholders-\w+) \| 재무팀", user).group(1)
             return response(
@@ -63,7 +66,6 @@ class FakeMessages:
                                 {"slot": "stakeholders", "item_id": item_id, "title": "재무팀", "fields": [{"key": "project", "value": "홈페이지 리뉴얼"}], "evidence_ids": []}
                             ],
                             "resolved_gap_ids": [gap_id],
-                            "followup": "",
                             "reply": "재무팀과의 협의를 '홈페이지 리뉴얼' 프로젝트로 정리했어요. 맞으면 '네', 고칠 부분이 있으면 말씀해 주세요.",
                         }
                     )
@@ -82,7 +84,10 @@ def analysis_payload(spec, messages):
             {"title": "재무팀", "fields": first, "evidence_ids": evidence + ["E99"]},
             {"title": "근거 없는 업체", "fields": dict(fields, party="근거 없는 업체"), "evidence_ids": ["E99"]},
         ]
-        gaps = [{"description": "재무팀 관련 프로젝트 없음", "question": "재무팀과는 어느 프로젝트에서 협의하셨나요?", "priority": "high", "related_item_title": "재무팀", "ask_for_document": False}]
+        gaps = [{"description": "재무팀 관련 프로젝트 없음", "question": "재무팀과는 어느 프로젝트에서 협의하셨나요?", "priority": "high", "related_item_title": "재무팀", "field": "project", "ask_for_document": False},
+            # 양식의 빈 칸이 아닌 질문(이미 채운 칸, 칸과 무관한 궁금증)은 코드가 버린다
+            {"description": "담당자", "question": "재무팀 담당자는 누구인가요?", "priority": "high", "related_item_title": "재무팀", "field": "party", "ask_for_document": False},
+            {"description": "기타", "question": "입찰 공고는 언제 하나요?", "priority": "high", "related_item_title": "", "field": "", "ask_for_document": False}]
         return {"items": items, "coverage": "partial", "summary": "재무팀과 협업", "gaps": gaps}
     items = []
     for n in range(spec.min_items):
@@ -112,6 +117,9 @@ def test_claude_engine_end_to_end(kb):
     assert [m["kind"] for m in result.messages] == ["summary", "question"]
     assert result.messages[0]["content"].startswith("자료 5건에서")
     assert "재무팀과는 어느 프로젝트에서 협의하셨나요?" in result.messages[1]["content"]
+    questions = [g["question"] for g in snap["gaps"]]
+    assert "재무팀 담당자는 누구인가요?" not in questions and "입찰 공고는 언제 하나요?" not in questions  # 빈 칸만 묻는다
+    assert next(g for g in snap["gaps"] if g["question"].startswith("재무팀과는"))["field"] == "project"
 
     contacts = snap["slots"]["stakeholders"]
     assert [it["title"] for it in contacts["items"]] == ["재무팀"]  # 근거 없는 항목은 버린다
@@ -149,7 +157,9 @@ def test_claude_engine_end_to_end(kb):
     assert result.snapshot["stage"] == "review"  # 남은 질문이 없으면 바로 문서 생성
     doc = result.snapshot["document"]
     assert "## 1. 업무 개요" not in doc and "인수자 핵심 당부사항" not in doc
-    assert {c["system"][0]["text"] for c in client.messages.calls} <= {ANALYSIS_SYSTEM, INTERPRET_SYSTEM, SUMMARY_SYSTEM}  # 문서 합성에는 모델을 쓰지 않는다
+    # 문서는 코드가 그리고, 모델은 업무 단위 요약의 진행상황 요약(수집된 항목만 근거)에만 쓴다
+    assert {c["system"][0]["text"] for c in client.messages.calls} <= {ANALYSIS_SYSTEM, INTERPRET_SYSTEM, SUMMARY_SYSTEM, UNIT_SUMMARY_SYSTEM}
+    assert "수집된 내용 기준 정상 운영 중</td>" in doc  # 업무 단위 요약의 진행상황 요약 칸
     assert "연결되는" not in doc  # 맞는 프로젝트가 없는 협업관계는 따로 표로 싣지 않고
     assert "확인 필요 사항" not in doc and "근거 자료" not in doc  # 양식에 없는 장은 싣지 않는다
 

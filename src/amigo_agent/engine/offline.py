@@ -347,6 +347,9 @@ class OfflineEngine:
                 break
         return gaps
 
+    def summarize_units(self, profile, slots) -> dict[str, str]:
+        return {}  # 자료에서 읽은 진행상황 요약을 그대로 둔다
+
     # ------------------------------------------------------------------ STAGE 2
     def summarize(self, profile, slots, gaps, sources) -> str:
         filled = [SLOT_BY_KEY[k].title for k, s in slots.items() if s.get("coverage") == "sufficient"]
