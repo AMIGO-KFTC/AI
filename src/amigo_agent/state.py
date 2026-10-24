@@ -56,6 +56,7 @@ class Gap(TypedDict, total=False):
     rank: int  # 질문 계획(Claude)이 정한 전체 순서. 없으면 priority·장 순서로 정렬
     ask_for_document: bool
     link_field: str  # 협업관계 항목이 어느 프로젝트인지 묻는 질문이면 그 연결 필드 키(답변이 이 필드 값이 된다)
+    unit_check: bool  # 자료에서 찾은 단위업무가 인계 대상이 맞는지 예/아니요로 묻는 질문(맨 앞에 묻는다)
     note_topic: str  # 부서별 특이사항을 확인하는 질문이면 그 특이사항 이름(답변이 이 이름의 항목이 된다)
     status: str  # open | asked | answered | resolved | skipped
 
