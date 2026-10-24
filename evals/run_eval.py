@@ -179,7 +179,7 @@ def build_kb() -> tuple[KnowledgeBase, str]:
 def run(args: argparse.Namespace) -> dict[str, Any]:
     client = anthropic.Anthropic(max_retries=3)
     persona_meter, judge_meter = UsageMeter(), UsageMeter()
-    config = AgentConfig(llm_mode=args.mode, model=args.agent_model, max_questions=args.questions, hide_irrelevant=args.hide_irrelevant == "on")
+    config = AgentConfig(llm_mode=args.mode, model=args.agent_model, hide_irrelevant=args.hide_irrelevant == "on")
     agent = HandoverAgent(config)
     raw_kb, sources = build_kb()
     kb = LoggingKB(raw_kb)
@@ -256,7 +256,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="AMIGO 에이전트 품질 평가")
     parser.add_argument("--mode", choices=["claude", "offline"], default="claude")
-    parser.add_argument("--questions", type=int, default=8, help="최대 질문 수(AMIGO_MAX_QUESTIONS)")
+    parser.add_argument("--questions", type=int, default=8, help="평가에서 답할 질문 수(에이전트의 질문 수에는 제한이 없다)")
     parser.add_argument("--out", default="evals/runs/latest")
     parser.add_argument("--hide-irrelevant", choices=["on", "off"], default="on", help="search_documents 의 '관련 없음' 숨김(AMIGO_HIDE_IRRELEVANT)")
     parser.add_argument("--agent-model", default=os.getenv("AMIGO_EVAL_AGENT_MODEL", "claude-sonnet-5-5"), help="평가할 에이전트의 모델(서비스 기본값 AMIGO_LLM_MODEL 과 별개)")

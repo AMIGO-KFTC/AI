@@ -56,6 +56,7 @@ class Gap(TypedDict, total=False):
     ask_for_document: bool
     link_field: str  # 협업관계 항목이 어느 프로젝트인지 묻는 질문이면 그 연결 필드 키(답변이 이 필드 값이 된다)
     note_topic: str  # 부서별 특이사항을 확인하는 질문이면 그 특이사항 이름(답변이 이 이름의 항목이 된다)
+    followup_of: str  # 앞 답변에서 빠진 요소를 묻는 보충 질문이면 원래 질문 id(보충 질문은 한 번만)
     status: str  # open | asked | answered | resolved | skipped
 
 
