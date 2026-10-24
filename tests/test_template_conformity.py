@@ -9,14 +9,14 @@ from amigo_agent.template import slots_for
 from htmltables import html_tables, texts
 
 LEAVE = {"name": "김민수", "mode": "leave"}
-B_LABELS = ["업무 개요", "주요 일정 및 처리사항", "업무 처리방법", "중점관리사항", "비상 대응 및 협조사항", "미결사항 및 후속 조치", "참고자료"]
+B_LABELS = ["업무 유형", "주요 일정 및 처리사항", "현재 진행 상태", "업무 처리방법", "주의사항 및 후속조치", "참고자료"]
 
 
 def _leave_slots():
     slots = empty_slots([s.key for s in slots_for(LEAVE)])
     for name in ("웹서비스 운영", "월간 보고"):
-        emergency = "재무팀 박지훈 차장에게 문의" if name == "월간 보고" else ""
-        upsert_item(slots["leave_tasks"], item_id="", title=name, fields={"name": name, "overview": "개요", "emergency": emergency}, citations=[], origin="document")
+        cautions = "재무팀 박지훈 차장에게 문의" if name == "월간 보고" else ""
+        upsert_item(slots["leave_tasks"], item_id="", title=name, fields={"name": name, "task_type": "정기", "cautions": cautions}, citations=[], origin="document")
     return slots
 
 
@@ -24,13 +24,13 @@ def _render(slots, gaps=()):
     return render_document(profile=LEAVE, slots=slots, gaps=list(gaps), sources=[], version=1)
 
 
-def test_leave_document_has_the_seven_template_b_items_in_order():
+def test_leave_document_has_the_template_a_items_in_order():
     md = _render(_leave_slots())
     assert "연결되는" not in md and "| 담당자 | 세부 업무명 | 대응·협조 내용 | 추후 고려사항 |" not in md  # 양식에 없는 별도 표가 없다
     card = md[md.index("### 1)"):md.index("### 2)")]
     labels = [line.split("|")[1].strip() for line in card.splitlines() if line.startswith("| ")]
-    assert [l for l in labels if l in B_LABELS] == B_LABELS  # B. 세부 업무의 7개 항목이 정해진 순서로
-    assert "재무팀 박지훈 차장에게 문의" in md  # 비상 대응 및 협조사항은 세부 업무 카드의 한 칸이다
+    assert [l for l in labels if l in B_LABELS] == B_LABELS  # 장기휴가 A. 세부 업무의 6개 항목이 정해진 순서로
+    assert "재무팀 박지훈 차장에게 문의" in md  # 비상 대응은 '주의사항 및 후속조치' 칸에 들어간다
 
 
 DOCS = [

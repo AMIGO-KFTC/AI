@@ -24,7 +24,7 @@ def collab(slots, party, project_name, **fields):
     )
 
 
-def test_render_numbers_citations_and_escapes_cells():
+def test_render_marks_citations_next_to_the_text_and_leaves_out_pending_and_evidence_sections():
     slots = empty_slots()
     slots["systems"]["items"] = [
         {"id": "systems-1", "title": "CMS", "fields": {"name": "CMS", "purpose": "게시물 | 승인", "how_to_get": "전자결재\n신청"}, "citations": [CITE]},
@@ -34,10 +34,11 @@ def test_render_numbers_citations_and_escapes_cells():
     md = render(slots, gaps)
     assert "| 인계자 | 김민수 과장 |" in md
     assert "2026-10-04 · AMIGO 자동 작성 초안 v3" in md
-    assert "| CMS | 게시물 \\| 승인 | - | 전자결재 / 신청 | ID: ________ / PW: ________ | [1] |" in md
-    assert "| GA | - | - | - | ID: ________ / PW: ________ | [1] |" in md  # 같은 근거는 같은 번호
-    assert '1. 업무정의서.pdf p.2 — "재무팀과 협의한다"' in md
-    assert "- [시스템 접근 권한] GA 신청 방법 없음 (인계자 미확인)" in md
+    # 근거 문장과 겹치는 칸이 없으면 항목 이름 뒤에 번호를 단다. 같은 근거는 같은 번호
+    assert "| CMS [1] | 게시물 \\| 승인 | - | 전자결재 / 신청 | ID: ________ / PW: ________ |" in md
+    assert "| GA [1] | - | - | - | ID: ________ / PW: ________ |" in md
+    # 양식에 없는 장(확인 필요 사항·근거 자료)과 근거 열은 문서에 싣지 않는다(화면의 오른쪽 패널·번호 팝업에서 본다)
+    assert "확인 필요 사항" not in md and "근거 자료" not in md and "| 근거 |" not in md and "GA 신청 방법 없음" not in md
     assert "## 1. 업무 단위 요약 + 일정 명세표\n\n확인된 내용이 없습니다." in md
 
 
@@ -50,9 +51,10 @@ def test_unit_summary_draws_connected_bars_without_evidence_column():
         {"id": "o4", "title": "정기 점검", "fields": {"name": "정기 점검", "period": "1·4·7·10월"}, "citations": [CITE]},
     ]
     md = render(slots)
-    (table,) = [t for t in html_tables(md) if t and texts(t[0])[:2] == ["단위업무명", "1월"]]
-    assert texts(table[0]) == ["단위업무명"] + [f"{m}월" for m in range(1, 13)] + ["비고"]  # 근거 열이 없다
-    rows = {r[0]["text"]: r for r in table[1:]}
+    (table,) = [t for t in html_tables(md) if t and texts(t[0]) == ["단위업무명", "계획기간", "진행상황 요약"]]
+    # 머리글 2행: '단위업무명 | 계획기간(1~12월 위로 병합) | 진행상황 요약' 아래에 1~12월. 근거 열이 없다
+    assert [c["colspan"] for c in table[0]] == [1, 12, 1] and texts(table[1]) == [f"{m}월" for m in range(1, 13)]
+    rows = {r[0]["text"]: r for r in table[2:]}
 
     def bars(name):  # (시작 월, 이어진 달 수) 목록 — 막대 칸 하나가 연속된 달 전체를 차지한다
         out, month = [], 1
@@ -64,9 +66,9 @@ def test_unit_summary_draws_connected_bars_without_evidence_column():
 
     assert bars("공동망 운영") == [(3, 3)]  # 3·4·5월이 끊김 없이 한 막대
     assert bars("40년사 발간 추진") == [(1, 1), (10, 3)]  # 10~12월은 한 막대, 해를 넘긴 1월은 따로
-    assert bars("통계시스템") == [] and rows["통계시스템"][-1]["text"] == "계획기간: 미정"  # 월로 읽을 수 없으면 원문을 비고에
+    assert bars("통계시스템") == [] and rows["통계시스템"][-1]["text"] == "계획기간: 미정"  # 월로 읽을 수 없으면 원문을 마지막 열(진행상황 요약)에
     assert bars("정기 점검") == [(1, 1), (4, 1), (7, 1), (10, 1)]  # 떨어진 달은 이어 붙이지 않는다
-    assert all(sum(c["colspan"] for c in r) == 14 for r in table)  # 어느 행이든 14칸(이름·12개월·비고)
+    assert all(sum(c["colspan"] for c in r) == 14 for r in table[2:]) and sum(c["colspan"] for c in table[0]) == 14  # 어느 행이든 14칸(이름·12개월·진행상황 요약)
     assert rows["공동망 운영"][-1]["text"] == "상시 점검" and "[1]" not in md.split("## 2.")[0]
 
 
@@ -81,8 +83,8 @@ def test_collaboration_is_a_split_cell_inside_each_project_card():
     md = render(slots)
     first, second = [t for t in html_tables(md) if t and texts(t[0]) == ["항목", "내용"]]
     labels = [r[0]["text"] for r in first[1:] if r[0]["tag"] == "th"]
-    # 협업관계 칸은 '추진 경과 및 현황' 바로 뒤, 의사결정 앞에 있다
-    assert labels.index("주요 협업관계 및 협의사항") == labels.index("추진 경과 및 현황") + 1
+    # 협업관계 칸은 '3. 추진 경과' 바로 뒤(템플릿 4번), 의사결정 앞에 있다
+    assert labels.index("주요 협업관계 및 협의사항") == labels.index("추진 경과") + 1
     assert labels.index("주요 의사결정 및 판단 근거") == labels.index("주요 협업관계 및 협의사항") + 1
     head = next(r for r in first if r[0]["text"] == "주요 협업관계 및 협의사항")
     assert head[0]["rowspan"] == 3  # 머리글 줄 + 담당자 2명 = 3줄에 걸쳐 칸이 나뉜다(왼쪽 라벨은 합쳐진 한 칸)
@@ -93,9 +95,8 @@ def test_collaboration_is_a_split_cell_inside_each_project_card():
     # 다른 프로젝트의 협업관계는 섞이지 않는다
     second_head = next(r for r in second if r[0]["text"] == "주요 협업관계 및 협의사항")
     assert second_head[0]["rowspan"] == 2 and texts(second[second.index(second_head) + 1]) == ["법무팀", "문구 검토", "-"]
-    # 프로젝트를 맞출 수 없는 항목은 양식에 없는 표로 싣지 않고 '확인 필요 사항'에 올린다
-    assert "연결되는" not in md and "| 감사팀 | 없는 프로젝트 | 사전 점검 | - |" not in md
-    assert "'감사팀'의 주요 협업관계 및 협의사항이(가) 어느 프로젝트명에 해당하는지 확인이 필요합니다 (입력된 프로젝트명: '없는 프로젝트', 협의내용: 사전 점검) (인계자 확인 필요)" in md
+    # 프로젝트를 맞출 수 없는 항목은 양식에 없는 표로 싣지 않는다(어느 프로젝트인지 묻는 질문이 화면의 확인 필요 사항에 남는다)
+    assert "연결되는" not in md and "감사팀" not in md
     # 별도 장·그림·삭제한 열은 없다
     assert "비정기 업무 협업관계 및 협의사항" not in "\n".join(line for line in md.splitlines() if line.startswith("## "))
     assert "```mermaid" not in md and "관계 유형" not in md and "연락처" not in md and "협의 상대" not in md
@@ -123,24 +124,25 @@ def test_collaboration_without_projects_is_still_shown():
     collab(slots, "재무팀", "홈페이지 리뉴얼", discussed="예산 협의")
     md = render(slots)
     assert "확인된 프로젝트가 없습니다" in md and "| 재무팀 | 홈페이지 리뉴얼 | 예산 협의 | - |" not in md  # 양식에 없는 표로 싣지 않는다
-    tail = md[md.index("확인 필요 사항"):]
-    assert "'재무팀'의 주요 협업관계 및 협의사항이(가) 어느 프로젝트명에 해당하는지 확인이 필요합니다" in tail and "홈페이지 리뉴얼" in tail and "예산 협의" in tail  # 내용은 확인 필요 사항에 남는다
+    assert "확인 필요 사항" not in md and "예산 협의" not in md
 
 
-def test_leave_version_uses_the_same_designs():
+def test_leave_version_follows_template_a_b_c():
     profile = {"name": "김민수", "mode": "leave"}
-    slots = empty_slots(["leave_units", "leave_tasks", "systems"])
-    slots["leave_units"]["items"] = [{"id": "u1", "title": "공동망 운영", "fields": {"name": "공동망 운영", "period": "11월~12월"}, "citations": [CITE]}]
+    slots = empty_slots(["leave_tasks", "systems", "contacts"])
     slots["leave_tasks"]["items"] = [
-        {"id": "t1", "title": "차액 정산", "fields": {"name": "차액 정산", "overview": "정산", "schedule": "매월 말", "emergency": "재무팀 박지훈 차장(내선 2345)에게 문의"}, "citations": [CITE]}
+        {"id": "t1", "title": "차액 정산", "fields": {"name": "차액 정산", "task_type": "정기", "schedule": "매월 말", "cautions": "재무팀 박지훈 차장(내선 2345)에게 문의"}, "citations": [CITE]}
+    ]
+    slots["contacts"]["items"] = [
+        {"id": "c1", "title": "박지훈", "fields": {"name": "박지훈", "org": "금융결제원", "dept": "재무팀", "position": "차장", "phone": "내선 2345", "task": "대금 지급"}, "citations": [CITE]}
     ]
     md = render(slots, profile=profile)
-    gantt = [t for t in html_tables(md) if t][0]
-    assert texts(gantt[0])[:2] == ["단위업무명", "1월"] and any("bar" in c["cls"] and c["colspan"] == 2 for c in gantt[1])  # 11~12월이 한 막대
-    assert "| 비상 대응 및 협조사항 | 재무팀 박지훈 차장(내선 2345)에게 문의 |" in md  # 템플릿의 5번 항목이 카드의 한 행이다
+    assert "<th>1월</th>" not in md  # 장기휴가에는 월별 일정표가 없다
+    assert "| 주의사항 및 후속조치 | 재무팀 박지훈 차장(내선 2345)에게 문의 [1] |" in md  # 근거 문장과 겹치는 칸 뒤에 번호
     rows = [line.split("|")[1].strip() for line in md.splitlines() if line.startswith("| ")]
-    assert rows.index("비상 대응 및 협조사항") == rows.index("중점관리사항") + 1  # 템플릿의 5번 항목 자리
-    assert "## 1. 부재 중 처리할 단위 업무" in md and "## 2. 세부 업무" in md and "## 3. 시스템 접근 권한" in md
+    assert rows.index("주의사항 및 후속조치") == rows.index("업무 처리방법") + 1  # 템플릿 5번 항목 자리
+    assert "## 1. 세부 업무" in md and "## 2. 시스템 접근 권한" in md and "## 3. 주요 연락망" in md
+    assert "| 이름 | 기관 | 부서 | 직책 | 연락처 | 관련 업무 |" in md.replace(" | 근거 |", " |")
 
 
 def test_plan_months_reads_common_period_notations():
@@ -151,3 +153,30 @@ def test_plan_months_reads_common_period_notations():
     assert plan_months("12월~2월") == [1, 2, 12]
     assert plan_months("2026.10 ~ 2027.01") == [1, 10, 11, 12]
     assert plan_months("") == [] and plan_months("미정") == []
+
+
+def test_regular_task_collaboration_is_a_five_column_table_inside_each_card():
+    slots = empty_slots()
+    slots["regular"]["items"] = [{"id": "r1", "title": "차액 정산", "fields": {"name": "차액 정산", "overview": "월말 정산", "decisions": "익월 5일 마감"}, "citations": [CITE]}]
+    slots["partners"]["items"] = [
+        {"id": "p1", "title": "박지훈 차장", "fields": {"org": "재무팀", "name": "박지훈 차장", "role": "회계자료 확인", "phone": "내선 2345", "note": "확정 전 수치 변경 확인", "task": "차액 정산"}},
+        {"id": "p2", "title": "김하늘", "fields": {"org": "각 사업부서", "name": "김하늘", "role": "실적자료 취합", "phone": "-", "note": "기한 전 사전 안내", "task": "차액 정산"}},
+    ]
+    md = render(slots)
+    (card,) = [t for t in html_tables(md) if t and texts(t[0]) == ["항목", "내용"] and "차액 정산" not in texts(t[0])]
+    labels = [texts(r)[0] for r in card]
+    at = labels.index("주요 협업관계")
+    assert labels[at - 1] == "주요 의사결정 및 판단 근거"  # 의사결정 다음 자리(템플릿 순서)
+    assert texts(card[at]) == ["주요 협업관계", "소속", "이름", "주요역할", "연락처", "비고(유의사항)"] and card[at][0]["rowspan"] == 3
+    assert texts(card[at + 1]) == ["재무팀", "박지훈 차장", "회계자료 확인", "내선 2345", "확정 전 수치 변경 확인"]
+    assert all(sum(c["colspan"] for c in r) == 6 for r in card if r[0].get("rowspan", 1) == 1 and texts(r)[0] in ("업무 개요", "근거"))  # 다른 행은 내용 칸을 5칸 병합
+
+
+def test_citation_number_goes_right_after_the_field_it_supports_and_internal_ids_are_removed():
+    slots = empty_slots()
+    cite = {"source_id": "s1", "label": "매뉴얼.hwpx", "chunk_id": "c9", "quote": "게시물은 반드시 부서장 승인 후 게시한다"}
+    slots["regular"]["items"] = [{"id": "r1", "title": "게시물 점검", "citations": [cite],
+        "fields": {"name": "게시물 점검", "overview": "주간 점검(E10)", "key_points": "부서장 승인 후 게시해야 합니다"}}]
+    md = render(slots)
+    assert '<th>중점 관리사항</th><td colspan="5">부서장 승인 후 게시해야 합니다 [1]</td>' in md and "### 1) 게시물 점검\n" in md
+    assert '<th>업무 개요</th><td colspan="5">주간 점검</td>' in md and "(E10)" not in md

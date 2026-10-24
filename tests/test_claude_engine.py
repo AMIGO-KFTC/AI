@@ -75,7 +75,7 @@ def analysis_payload(spec, messages):
     fields = {f.key: "" for f in spec.fields}
     first = dict(fields)
     if spec.key == "stakeholders":
-        first.update(party="재무팀", discussed="대금 지급 협의")
+        first.update(party="재무팀", discussed="대금 지급 협의", upcoming="다음 분기 정산 일정 공유")
         evidence = ["E1"] if "E1" in json.dumps([m["content"] for m in messages], ensure_ascii=False, default=str) else []
         items = [
             {"title": "재무팀", "fields": first, "evidence_ids": evidence + ["E99"]},
@@ -150,7 +150,7 @@ def test_claude_engine_end_to_end(kb):
     assert "## 1. 업무 개요" not in doc and "인수자 핵심 당부사항" not in doc
     assert {c["system"][0]["text"] for c in client.messages.calls} <= {ANALYSIS_SYSTEM, INTERPRET_SYSTEM, SUMMARY_SYSTEM}  # 문서 합성에는 모델을 쓰지 않는다
     assert "연결되는" not in doc  # 맞는 프로젝트가 없는 협업관계는 따로 표로 싣지 않고
-    assert "[비정기 업무 협업관계 및 협의사항] '재무팀'의 주요 협업관계 및 협의사항이(가) 어느 프로젝트명에 해당하는지 확인이 필요합니다" in doc and "대금 지급 협의" in doc  # 확인 필요 사항에 내용과 함께 올린다
+    assert "확인 필요 사항" not in doc and "근거 자료" not in doc  # 양식에 없는 장은 싣지 않는다
 
 
 def test_slot_output_models_are_strict():
@@ -220,4 +220,4 @@ def test_reference_field_value_reaches_document(kb):
     agent = HandoverAgent(AgentConfig(llm_mode="claude", model="claude-opus-5-5", max_concurrency=1), client=FakeClient())
     agent.start("c2", PROFILE, kb)
     doc = agent.finish("c2", kb).snapshot["document"]
-    assert "| 참고자료 및 관련 근거 | 참고자료 및 관련 근거 값 1 |" in doc
+    assert '<th>참고자료 및 관련 근거</th><td colspan="5">참고자료 및 관련 근거 값 1</td>' in doc  # 정기업무 카드는 협업관계 표(5열)를 품는 HTML 표

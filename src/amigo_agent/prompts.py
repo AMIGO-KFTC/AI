@@ -171,7 +171,7 @@ def team_guidelines_block(guidelines: dict[str, Any] | None, *, slot_key: str = 
 
 
 # 부서별 특이사항(사내 문서의 요약): 부서 / 중요문서 위치 / 관리 가맹점 / 라이센스 업체. 정보일 뿐 사실의 근거가 아니다(dept_info.py).
-COLLABORATION_SLOTS = ("stakeholders", "irregular", "regular", "leave_tasks")
+COLLABORATION_SLOTS = ("stakeholders", "partners", "irregular", "regular", "leave_tasks")
 
 
 def _info_lines(info: dict[str, Any], *, with_location: bool = True) -> list[str]:
@@ -234,9 +234,13 @@ def dept_notes_block(profile: dict[str, Any], *, slot_key: str = "", purpose: st
 
 def slot_spec_block(spec: SlotSpec) -> str:
     fields = "\n".join(f"- {f.key}({f.label}){': ' + f.hint if f.hint else ''}" for f in spec.fields)
+    conditional = "".join(
+        f"\n조건부 필수: {key}({spec.label(key)}) 는 {when}({spec.label(when)}) 에 '{'·'.join(values)}' 이(가) 들어갈 때만 필수입니다(그 밖에는 비워 두고 묻지 않습니다)."
+        for key, when, values in spec.required_when
+    )
     return (
         f"## 작성할 장: {spec.title}\n{spec.description}\n\n필드:\n{fields}\n"
-        f"필수 필드: {', '.join(spec.required)} / 최소 항목 수: {spec.min_items}"
+        f"필수 필드: {', '.join(spec.required)} / 최소 항목 수: {spec.min_items}{conditional}"
     )
 
 

@@ -17,45 +17,69 @@ def labels(slot_key):
 
 
 def test_two_versions_have_their_own_chapters_in_template_order():
-    # [인사발령] A 업무 단위 요약 → B 정기업무 → C 비정기 업무(+협업 표) → D 시스템 접근 권한 → E 부서별 추가 자료
-    assert keys(PROFILE) == ["overview", "regular", "irregular", "stakeholders", "systems", "dept_notes"]
-    # [장기휴가] A 부재 중 처리할 단위 업무 → B 세부 업무 → C 시스템 접근 권한
-    assert keys(LEAVE) == ["leave_units", "leave_tasks", "systems"]
+    # [인사발령] A 업무 단위 요약 → B 정기업무(+협업 표) → C 비정기 업무(+협업 표) → D 시스템 접근 권한 → E 부서별 추가 자료
+    assert keys(PROFILE) == ["overview", "regular", "partners", "irregular", "stakeholders", "systems", "dept_notes"]
+    # [장기휴가] A 세부 업무 → B 시스템 접근 권한 → C 주요 연락망
+    assert keys(LEAVE) == ["leave_tasks", "systems", "contacts"]
     assert mode_of({}) != MODE_LEAVE and mode_of({"mode": "LEAVE"}) == MODE_LEAVE
 
 
+def test_every_field_is_required_except_conditional_ones():
+    for spec in slots_for(PROFILE) + slots_for(LEAVE):
+        assert set(spec.required) == {f.key for f in spec.fields}, spec.key  # 필수/추천 구분 없이 모두 필수
+    assert SLOT_BY_KEY["leave_tasks"].required_when == (("status", "task_type", ("프로젝트",)),)
+
+
 def test_unit_summary_table_columns():
-    assert labels("overview") == ["단위업무명", "계획기간", "비고"]
+    assert labels("overview") == ["단위업무명", "계획기간", "진행상황 요약"]
     assert SLOT_BY_KEY["overview"].layout == "gantt" and SLOT_BY_KEY["overview"].evidence is False  # 월별 막대, 근거 없음
 
 
 def test_regular_task_items_match_the_template_questions():
     assert labels("regular")[1:] == [
-        "업무 개요", "수행 시기", "수행 절차", "중점관리사항", "주요 의사결정 및 판단 근거", "주요 협업 및 협의사항", "향후 과제 및 발전 방향", "참고자료 및 관련 근거",
-    ]
+        "업무 개요", "수행 시기", "수행 절차", "중점 관리사항", "주요 의사결정 및 판단 근거", "향후 과제 및 발전 방향", "참고자료 및 관련 근거",
+    ]  # '주요 협업관계'는 표(별도 슬롯 partners)로 의사결정 다음 자리에 들어간다
+    partners = SLOT_BY_KEY["partners"]
+    assert (partners.embed_into, partners.embed_after, partners.embed_label) == ("regular", "decisions", "주요 협업관계")
+    assert [f.label for f in partners.fields if f.key != partners.embed_link] == ["소속", "이름", "주요역할", "연락처", "비고(유의사항)"]
+    assert partners.title_field == "name"
     hints = {f.label: f.hint for f in SLOT_BY_KEY["regular"].fields}
-    assert hints["업무 개요"] == "무엇을, 왜 하는가?"
+    assert hints["업무 개요"] == "무엇을, 왜 하는가?" and hints["수행 시기"] == "언제 하는가?"
     assert hints["주요 의사결정 및 판단 근거"] == "무엇을, 왜 그렇게 결정했는가?"
 
 
 def test_irregular_project_items_match_the_template_and_collaboration_is_a_table():
     # 7개 항목 중 '4. 주요 협업관계 및 협의사항'은 표(별도 슬롯)로 구성한다
     assert labels("irregular")[1:] == [
-        "프로젝트 개요 및 추진 배경", "프로젝트 목표 및 기대성과", "추진 경과 및 현황", "주요 의사결정 및 판단 근거", "중점관리사항", "향후 추진과제 및 발전 방향",
+        "프로젝트 개요", "프로젝트 목표", "추진 경과", "주요 의사결정 및 판단 근거", "중점 관리사항", "향후 추진과제 및 발전 방향",
     ]
     collab = SLOT_BY_KEY["stakeholders"]
-    assert (collab.embed_into, collab.embed_after) == ("irregular", "progress")  # 비정기 업무 카드 안, '추진 경과 및 현황' 뒤
-    assert [f.key for f in collab.fields] == ["party", "project", "discussed", "upcoming"]  # 구분·관계 유형·담당자·연락처는 삭제
-    assert "팀 또는 개인" in collab.fields[0].hint
-    assert labels("stakeholders")[:4] == ["담당자", "프로젝트명", "협의내용", "추후 고려사항"]
+    assert (collab.embed_into, collab.embed_after, collab.embed_label) == ("irregular", "progress", "주요 협업관계 및 협의사항")  # 3. 추진 경과 다음 4번
+    assert [f.key for f in collab.fields] == ["party", "project", "discussed", "upcoming"]
+    assert labels("stakeholders") == ["담당자", "프로젝트명", "협의내용", "추후 고려사항"]
 
 
 def test_leave_detail_items_match_the_template():
-    # 템플릿의 7개 항목(5번 '비상 대응 및 협조사항' 포함)이 순서대로 세부 업무의 필드가 된다
-    assert labels("leave_tasks")[1:] == ["업무 개요", "주요 일정 및 처리사항", "업무 처리방법", "중점관리사항", "비상 대응 및 협조사항", "미결사항 및 후속 조치", "참고자료"]
-    assert SLOT_BY_KEY["leave_tasks"].field("emergency").hint == "문제가 발생하면 어떻게 대응하고 누구에게 문의해야 하는가?"  # 템플릿의 핵심 질문
-    assert labels("leave_units")[0] == "단위업무명" and SLOT_BY_KEY["leave_units"].layout == "gantt"
-    assert "leave_contacts" not in SLOT_BY_KEY  # 별도 슬롯이 아니다
+    # 장기휴가 A. 세부 업무: 1 업무 유형 2 주요 일정 및 처리사항 3 현재 진행 상태(프로젝트성만) 4 업무 처리방법 5 주의사항 및 후속조치 6 참고자료
+    assert labels("leave_tasks")[1:] == ["업무 유형", "주요 일정 및 처리사항", "현재 진행 상태", "업무 처리방법", "주의사항 및 후속조치", "참고자료"]
+    assert SLOT_BY_KEY["leave_tasks"].field("schedule").hint == "부재 기간 중 언제, 무엇을 처리해야 하는가?"  # 템플릿의 핵심 질문
+    assert "leave_units" not in SLOT_BY_KEY and "leave_contacts" not in SLOT_BY_KEY
+
+
+def test_leave_contacts_chapter_matches_the_template():
+    # 장기휴가 C. 주요 연락망: 이름 / 기관 / 부서 / 직책 / 연락처 / 관련 업무
+    assert labels("contacts") == ["이름", "기관", "부서", "직책", "연락처", "관련 업무"]
+    assert SLOT_BY_KEY["contacts"].modes == (MODE_LEAVE,)
+
+
+def test_project_status_is_required_only_for_project_type_tasks():
+    from amigo_agent.state import missing_fields
+
+    spec = SLOT_BY_KEY["leave_tasks"]
+    base = {"name": "정산", "schedule": "매월 말", "method": "절차", "cautions": "주의", "references": "매뉴얼"}
+    assert missing_fields(spec, {"fields": {**base, "task_type": "정기"}}) == []  # 정기 업무는 진행 상태를 묻지 않는다
+    assert missing_fields(spec, {"fields": {**base, "task_type": "프로젝트성"}}) == ["status"]
+    assert missing_fields(spec, {"fields": base}) == ["task_type"]  # 유형부터 묻는다
 
 
 def test_system_access_slot_is_shared_and_keeps_passwords_blank():
@@ -68,13 +92,14 @@ def test_leave_version_runs_end_to_end_with_only_its_chapters():
     agent = HandoverAgent()
     seen = []
     result = agent.start("leave1", LEAVE, kb, on_event=seen.append)
-    assert {e["key"] for e in seen if e["type"] == "slot"} == {"leave_units", "leave_tasks", "systems"}
-    assert set(result.snapshot["slots"]) == {"leave_units", "leave_tasks", "systems"}
-    assert all(g["slot"] in {"leave_units", "leave_tasks", "systems"} for g in result.snapshot["gaps"])
+    chapters = {"leave_tasks", "systems", "contacts"}
+    assert {e["key"] for e in seen if e["type"] == "slot"} == chapters
+    assert set(result.snapshot["slots"]) == chapters
+    assert all(g["slot"] in chapters for g in result.snapshot["gaps"])
     doc = agent.finish("leave1", kb).snapshot["document"]
     headings = [line for line in doc.splitlines() if line.startswith("## ")]
-    assert headings[:3] == ["## 1. 부재 중 처리할 단위 업무", "## 2. 세부 업무", "## 3. 시스템 접근 권한"]
-    assert "정기업무" not in doc and "비정기" not in doc and "부서별 추가 자료" not in doc
+    assert headings[:3] == ["## 1. 세부 업무", "## 2. 시스템 접근 권한", "## 3. 주요 연락망"]
+    assert "정기업무" not in doc and "비정기" not in doc and "부서별 추가 자료" not in doc and "<th>1월</th>" not in doc  # 장기휴가에는 월별 일정표가 없다
     assert "ID: ________ / PW: ________" in doc
 
 
@@ -92,6 +117,31 @@ def test_full_version_document_follows_the_template_chapters():
         "## 4. 시스템 접근 권한",
         "## 5. 부서별 추가 자료",
     ]
-    assert "## 1. 업무 개요" not in doc and "인수자 핵심 당부사항" not in doc  # 문서 앞 요약 장은 없다
-    assert "<th>1월</th>" in doc and "<th>12월</th>" in doc and "<th>비고</th>" in doc  # 업무 단위 요약은 월별 일정표
-    assert "| 항목 | 내용 |" in doc and "| 업무 개요 |" in doc and "| 수행 시기 |" in doc
+    assert '<th colspan="12">계획기간</th>' in doc and "<th>1월</th>" in doc and '<th rowspan="2">진행상황 요약</th>' in doc  # 월별 일정표, 머리글 2행
+    assert "<th>업무 개요</th>" in doc and "<th>수행 시기</th>" in doc and "<th>주요 협업관계</th>" in doc
+
+
+def test_code_asks_every_empty_required_field_the_model_did_not_ask():
+    from amigo_agent.nodes import _missing_field_gaps
+
+    item = {"id": "leave_tasks-1", "title": "홈페이지 개편", "fields": {"name": "홈페이지 개편", "task_type": "프로젝트성", "schedule": "11월 검수", "method": "검수", "cautions": "일정"}}
+    slots = {"leave_tasks": {"items": [item]}}
+    model_gap = {"id": "gap-1", "slot": "leave_tasks", "item_id": "leave_tasks-1", "question": "현재 진행단계는 어디까지인가요?", "status": "open"}
+    made = _missing_field_gaps(slots, slots_for(LEAVE), [model_gap])
+    assert [g["question"] for g in made] == ["'홈페이지 개편'의 참고자료을(를) 알려 주세요."]  # 진행 상태는 모델이 이미 묻고, 참고자료만 빠졌다
+    assert _missing_field_gaps(slots, slots_for(LEAVE), [model_gap, *made]) == []
+
+
+def test_partner_name_holds_only_a_person_team_or_organization():
+    from amigo_agent.nodes import fix_party_names
+
+    slots = {"regular": {"items": [{"title": "SSL 인증서 갱신"}]}, "systems": {"items": [{"title": "도메인·SSL 인증서 관리"}]}}
+    items = [
+        {"title": "x", "fields": {"name": "도메인·SSL 인증서 관리 (총무팀)", "org": "", "task": "SSL 인증서 갱신"}},  # 시스템명 + 괄호 속 팀 → 팀명
+        {"title": "x", "fields": {"name": "SSL 인증서 갱신", "org": "총무팀"}},  # 업무명만 → 비워서 묻는다
+        {"title": "박지훈 차장", "fields": {"name": "박지훈 차장", "org": "재무팀"}},  # 사람 이름은 그대로
+    ]
+    fix_party_names(SLOT_BY_KEY["partners"], items, slots)
+    assert [it["fields"]["name"] for it in items] == ["총무팀", "", "박지훈 차장"]
+    assert items[0]["fields"]["org"] == "총무팀"
+    assert "업무명·시스템명은 쓰지 않는다" in SLOT_BY_KEY["partners"].field("name").hint
