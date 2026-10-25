@@ -56,22 +56,31 @@ def test_chat_and_plan_prompts():
     assert "웹 접근성 인증 현황표" in plan and "중복으로 봅니다" in plan and "가. " not in plan  # 중복 찾기에는 이름만
 
 
-def test_offline_engine_asks_management_of_uncovered_targets_and_turns_answers_into_items():
+def test_only_targets_related_to_the_givers_work_are_asked_like_other_cells():
+    """인수인계 목록 중 인계자의 업무 단위와 관련된 서류·물품만 항목이 되고, 관리 내용이 비면 다른 칸처럼 노션 질문 예시 문장으로 묻는다."""
+    profile = {**WITH_INFO, "units": [{"name": "웹 접근성 관리", "regular": ["웹 접근성 인증 갱신"], "irregular": []}]}
     agent = HandoverAgent()
-    snap = agent.start("d1", WITH_INFO, FakeKB()).snapshot
-    note_gaps = [g for g in snap["gaps"] if g.get("note_topic")]
-    assert len(note_gaps) == 3 and all(g["slot"] == "dept_notes" for g in note_gaps)
-    assert [g["note_topic"] for g in note_gaps][:3] == ["홈페이지 유지보수 계약 명세표", "웹 접근성 인증 현황표", "도메인·SSL 인증서 등록 현황표"]  # 목록 순서대로
+    snap = agent.start("d1", profile, FakeKB([])).snapshot
+    titles = [it["title"] for it in snap["slots"]["dept_notes"]["items"]]
+    assert titles == ["웹 접근성 인증 현황표", "웹 접근성 인증서 사본 첨부"]  # 업무와 관련 없는 계약 명세표·도메인 현황표·계정 명부는 뺀다
+    asked = [g for g in snap["gaps"] if g["slot"] == "dept_notes"]
+    assert [g["field"] for g in asked] == ["detail", "detail"] and not any(g.get("note_topic") for g in asked)
+    assert asked[0]["question"] == "'웹 접근성 인증 현황표'의 관리 내용에 대해 여쭤볼게요.\n어디에 보관되어 있고, 최신본은 누가 어떤 주기로 관리하나요?"
 
     current = next(g for g in snap["gaps"] if g["id"] == snap["current_gap_id"])
-    while not current.get("note_topic"):
-        snap = agent.skip("d1", FakeKB()).snapshot
+    while current["slot"] != "dept_notes":
+        snap = agent.skip("d1", FakeKB([])).snapshot
         current = next(g for g in snap["gaps"] if g["id"] == snap["current_gap_id"])
-    topic = current["note_topic"]
-    agent.send_message("d1", "공유드라이브에 보관하고 매년 12월에 갱신하며 담당자는 김민수 과장입니다", FakeKB())
-    snap = agent.send_message("d1", "네", FakeKB()).snapshot
-    item = next(it for it in snap["slots"]["dept_notes"]["items"] if it["title"] == topic)
-    assert "12월에 갱신" in item["fields"]["detail"] and item["fields"]["topic"] == topic
+    agent.send_message("d1", "공유드라이브에 보관하고 매년 12월에 갱신하며 담당자는 김민수 과장입니다", FakeKB([]))
+    snap = agent.send_message("d1", "네", FakeKB([])).snapshot
+    item = next(it for it in snap["slots"]["dept_notes"]["items"] if it["title"] == "웹 접근성 인증 현황표")
+    assert "12월에 갱신" in item["fields"]["detail"]
+
+
+def test_no_related_target_means_no_department_question():
+    profile = {**WITH_INFO, "units": [{"name": "예산 편성", "regular": ["월간 집행 보고"], "irregular": []}]}
+    snap = HandoverAgent().start("d3", profile, FakeKB([])).snapshot
+    assert not snap["slots"]["dept_notes"]["items"] and not [g for g in snap["gaps"] if g["slot"] == "dept_notes"]
 
 
 def test_targets_found_in_documents_become_items_with_citations():

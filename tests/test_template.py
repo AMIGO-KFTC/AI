@@ -198,3 +198,16 @@ def test_unit_summary_is_never_asked():
 
     item = {"id": "overview-1", "title": "공동망 운영", "fields": {"name": "공동망 운영", "period": "", "note": ""}}
     assert _missing_field_gaps({"overview": {"items": [item]}}, [SLOT_BY_KEY["overview"]], []) == []  # 계획기간·진행상황 요약 모두 묻지 않는다
+
+
+def test_collaboration_tables_leave_out_the_givers_own_team():
+    from amigo_agent.nodes import settle_items
+
+    profile = {**PROFILE, "organization": "디지털전략부 · 웹서비스팀"}
+    slot = {"items": [
+        {"id": "p1", "title": "김하늘 대리", "fields": {"org": "웹서비스팀", "name": "김하늘 대리", "task": "월간 보고"}},
+        {"id": "p2", "title": "박지훈 차장", "fields": {"org": "재무팀", "name": "박지훈 차장", "task": "월간 보고"}},
+        {"id": "p3", "title": "이서연", "fields": {"org": "디지털전략부 웹서비스팀", "name": "이서연", "task": "월간 보고"}},
+    ]}
+    settle_items(SLOT_BY_KEY["partners"], profile, slot)
+    assert [it["id"] for it in slot["items"]] == ["p2"]  # 같은 팀은 협업관계 표에 넣지 않는다
