@@ -10,7 +10,7 @@ import re
 from typing import Any
 
 from ..config import AgentConfig
-from ..dept_info import clean_dept_info, has_info, interleave, targets as dept_targets
+from ..dept_info import clean_dept_info, has_info, targets as dept_targets
 from ..kb import Evidence, KBAdapter
 from ..parties import consolidate_parties
 from ..state import Gap, SlotItem, SlotState, evaluate_coverage, item_label, missing_fields, new_id, upsert_item
@@ -150,7 +150,7 @@ class OfflineEngine:
         if spec.key in PARTY_SLOTS:
             consolidate_parties(slot["items"])
             del slot["items"][8:]
-        note_gaps = self._dept_note_gaps(spec, slot, usable, profile)  # 부서별 특이사항: 자료에 나오면 항목으로, 없으면 확인 질문으로
+        note_gaps = self._dept_note_gaps(spec, slot, usable, profile)  # 부·팀 인수인계 목록: 자료에 나오면 항목으로, 없으면 확인 질문으로
         items = slot["items"]
         slot["coverage"] = evaluate_coverage(spec, items)
         slot["summary"] = self._slot_summary(spec, items)
@@ -158,12 +158,12 @@ class OfflineEngine:
         return SlotResult(slot=slot, gaps=gaps)
 
     def _dept_note_gaps(self, spec: SlotSpec, slot: SlotState, evidences: list[Evidence], profile: dict[str, Any]) -> list[Gap] | None:
-        """'부서별 추가 자료' 장에서 이 부서가 관리하는 대상(라이센스 업체·가맹점·중요 문서)을 자료와 맞춰 본다. 정보가 없으면 None(기본 동작)."""
+        """'부서별 추가 자료' 장에서 부·팀 인수인계 목록의 서류·물품과 비고를 자료와 맞춰 본다. 정보가 없으면 None(기본 동작)."""
         info = clean_dept_info(profile.get("dept_notes")) if spec.key == "dept_notes" else None
         if info is None or not has_info(info):
             return None
         gaps: list[Gap] = []
-        for target in interleave(dept_targets(info)):
+        for target in dept_targets(info):
             name = target["name"]
             hit = next((ev for ev in evidences if name in ev.text), None)
             sentence = ""
@@ -385,7 +385,7 @@ class OfflineEngine:
             update = {"slot": gap["slot"], "item_id": gap.get("item_id") or "", "title": title, "fields": {gap["link_field"]: text}, "citations": []}
             reply = f"다음과 같이 정리했어요.\n\n**[{spec.title}] {title}**\n- **{spec.label(gap['link_field'])}**: {text}\n\n맞으면 '네', 고칠 부분이 있으면 말씀해 주세요."
             return Interpretation("answer", updates=[update], resolved_gap_ids=[gap["id"]], reply=reply)
-        if gap and gap.get("note_topic") and not (data.pending and NEGATIVE_RE.match(text)):  # 부서 특이사항 확인 질문의 답변: 이름은 특이사항, 내용은 답변
+        if gap and gap.get("note_topic") and not (data.pending and NEGATIVE_RE.match(text)):  # 부·팀 인수인계 목록 확인 질문의 답변: 이름은 서류·물품(또는 비고), 내용은 답변
             topic = gap["note_topic"]
             fields = {"topic": topic, "detail": text}
             update = {"slot": gap["slot"], "item_id": "", "title": topic, "fields": fields, "citations": []}

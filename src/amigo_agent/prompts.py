@@ -6,7 +6,7 @@ from typing import Any
 
 from .field_guides import guide_for
 from .links import link_names_block
-from .dept_info import clean_dept_info, has_info, targets as dept_targets
+from .dept_info import clean_dept_info, has_info, numbered, targets as dept_targets
 from .state import Gap, SlotState, Turn
 from .template import COVERAGE_LABELS, MODE_LABELS, SLOT_BY_KEY, SLOTS, SlotSpec, leave_period, mode_of
 
@@ -192,65 +192,63 @@ def team_guidelines_block(guidelines: dict[str, Any] | None, *, slot_key: str = 
     return "\n".join(lines)
 
 
-# 부서별 특이사항(사내 문서의 요약): 부서 / 중요문서 위치 / 관리 가맹점 / 라이센스 업체. 정보일 뿐 사실의 근거가 아니다(dept_info.py).
+# 부서・팀(반, 사무소)별 인수인계 목록(사내 문서의 요약): 부팀명 / 목록 / 비고. 정보일 뿐 사실의 근거가 아니다(dept_info.py).
 COLLABORATION_SLOTS = ("stakeholders", "partners", "irregular", "regular", "leave_tasks")
 
 
-def _info_lines(info: dict[str, Any], *, with_location: bool = True) -> list[str]:
-    lines = []
-    if info["documents"]:
-        docs = "; ".join(f"{d['name']}({d['location']})" if with_location and d["location"] else d["name"] for d in info["documents"])
-        lines.append(f"- 중요문서 위치: {docs}")
-    lines.append("- 관리 가맹점: " + ("; ".join(info["franchises"]) if info["franchises"] else "없음"))
-    lines.append("- 라이센스 업체: " + ("; ".join(f"{l['vendor']}({l['product']})" if l["product"] else l["vendor"] for l in info["licenses"]) if info["licenses"] else "없음"))
+def _info_lines(info: dict[str, Any]) -> list[str]:
+    lines = ["- 목록:" + ("" if info["items"] else " 없음")]
+    lines += [f"  {line}" for line in numbered(info["items"])]
+    if info["note"]:
+        lines.append("- 비고: " + info["note"].replace("\n", " / "))
     return lines
 
 
 def dept_notes_block(profile: dict[str, Any], *, slot_key: str = "", purpose: str = "") -> str:
-    """소속 부서의 특이사항(중요문서 위치·관리 가맹점·라이센스 업체)을 프롬프트 한 구간으로 만든다. 정보가 없으면 빈 문자열.
+    """소속 부·팀의 인수인계 목록(목록·비고)을 프롬프트 한 구간으로 만든다. 정보가 없으면 빈 문자열.
 
-    - slot_key == "dept_notes": 이 장에서 각 대상(라이센스 업체·가맹점·중요 문서)이 자료에서 어떻게 관리되는지 찾고, 자료에 없으면 '관리 방식'을 인계자에게 묻는다.
-    - 그 밖의 장(slot_key): 관련 있는 정보만 분석·질문에 참고한다. 협업 장에서는 협업 부서 정보도 함께 준다.
-    - purpose == "plan": 중복 질문을 찾는 프롬프트용(이름만, 같은 대상을 묻는 질문은 중복으로 본다).
-    - 그 밖(slot_key 없음): 인계자와 대화하는 프롬프트용(답변을 이 정보의 대상 이름으로 정리).
+    - slot_key == "dept_notes": 이 장에서 목록의 서류·물품이 자료에서 어떻게 관리되는지, 비고의 첨부·기재 사항이 있는지 찾고, 자료에 없으면 인계자에게 묻는다.
+    - 그 밖의 장(slot_key): 관련 있는 정보만 분석·질문에 참고한다. 협업 장에서는 협업 부·팀의 목록도 함께 준다.
+    - purpose == "plan": 중복 질문을 찾는 프롬프트용(이름만, 같은 서류·물품을 묻는 질문은 중복으로 본다).
+    - 그 밖(slot_key 없음): 인계자와 대화하는 프롬프트용(답변을 목록의 서류·물품 이름으로 정리).
     이 정보는 사실의 근거가 아니다. 근거 ID·민감 정보 원칙은 바뀌지 않는다.
     """
     info = clean_dept_info((profile or {}).get("dept_notes"))
     if not has_info(info):
         return ""
     lines = [
-        f"## 우리 부서 특이사항 ({info['department'] or profile.get('organization', '')})",
-        "사내 부서별 특이사항 문서의 요약으로, 이 부서가 실제로 관리하는 대상의 목록입니다. 정보 자체는 인수인계서 항목의 근거가 아닙니다. "
+        f"## 우리 부서・팀 인수인계 목록 ({info['department'] or profile.get('organization', '')})",
+        "사내 '부서・팀(반, 사무소)별 인수인계 목록'의 요약으로, 이 부·팀이 인계해야 하는 서류·물품의 목록입니다. 정보 자체는 인수인계서 항목의 근거가 아닙니다. "
         "항목의 내용은 여전히 근거 자료와 인계자 답변에서만 가져오고, 근거 ID 를 붙이는 원칙과 시스템 ID·비밀번호 같은 민감 정보를 다루지 않는 원칙은 바뀌지 않습니다.",
     ]
     if purpose == "plan":
         names = [t["name"] for t in dept_targets(info)]
-        lines.append("관리 대상: " + ", ".join(names))
-        lines.append("같은 대상의 관리 방식을 묻는 질문끼리는 중복으로 봅니다.")
+        lines.append("인계 대상: " + ", ".join(names))
+        lines.append("같은 서류·물품(또는 비고)을 묻는 질문끼리는 중복으로 봅니다.")
         return "\n".join(lines)
     lines += _info_lines(info)
     if slot_key == "dept_notes":
         lines.append(
-            "\n이 장(부서별 추가 자료)에서는 위 대상(라이센스 업체·관리 가맹점·중요 문서) 각각이 근거 자료에서 실제로 어떻게 관리되는지 찾습니다. "
-            "자료에서 찾은 대상은 대상 이름을 '추가 자료'로, 자료에 적힌 구체적인 내용(담당자·계약 기간·갱신 시기·점검 주기·관리 방식)을 '관리 내용'으로 적고 근거 ID 를 붙입니다. 위 목록의 이름과 위치만 옮겨 적지 않습니다. "
-            "자료에 관리 내용이 없는 대상은 인계자에게 확인할 질문(gaps)으로 만듭니다. 이 장의 gaps 는 이런 대상의 '관리 방식'을 묻는 질문으로만 채우고(대상과 무관한 일반 질문은 이 장에서 만들지 않습니다), "
-            "업체·가맹점·문서 이름을 넣어 구체적으로 묻습니다. 업체 이름이나 문서 위치처럼 위 목록에 이미 있는 정보는 다시 묻지 않습니다. 대상이 여럿이면 인수인계에 더 중요한 것부터 gaps 한도까지 만듭니다."
+            "\n이 장(부서별 추가 자료)에서는 위 목록의 서류·물품 각각이 근거 자료에서 실제로 어떻게 관리되는지(보관 위치·담당자·최신본 갱신 주기·관리 방식) 찾고, "
+            "비고에 적힌 첨부·인계물과 함께 적을 사항(예: 열쇠구분, 수량)도 자료에 있는지 확인합니다. "
+            "자료에서 찾은 서류·물품은 그 이름을 '추가 자료'로, 자료에 적힌 구체적인 내용을 '관리 내용'으로 적고 근거 ID 를 붙입니다. 위 목록의 이름만 옮겨 적지 않습니다. "
+            "자료에 관리 내용이 없는 서류·물품과 비고 사항은 인계자에게 확인할 질문(gaps)으로 만듭니다. 이 장의 gaps 는 이런 질문으로만 채우고(목록과 무관한 일반 질문은 이 장에서 만들지 않습니다), "
+            "서류·물품 이름이나 비고의 기재 사항을 넣어 구체적으로 묻습니다. 목록의 이름처럼 이미 있는 정보는 다시 묻지 않습니다. 대상이 여럿이면 인수인계에 더 중요한 것부터 gaps 한도까지 만듭니다."
         )
     elif slot_key:
-        lines.append("\n이 장과 관련된 대상이 자료나 대화에 나오면 위 정보를 참고해 분석에 반영하세요(예: 같은 업체·문서). 관련 없는 정보는 무시하세요(부서별 추가 자료 장에서 다룹니다). 목록에 있다는 이유만으로 자료에 없는 내용을 사실로 쓰지 않습니다.")
+        lines.append("\n이 장과 관련된 서류·물품이 자료나 대화에 나오면 위 정보를 참고해 분석에 반영하세요(예: 같은 명세표·현황표). 관련 없는 정보는 무시하세요(부서별 추가 자료 장에서 다룹니다). 목록에 있다는 이유만으로 자료에 없는 내용을 사실로 쓰지 않습니다.")
     else:
         lines.append(
-            "\n인계자의 답변이 위 대상(라이센스 업체·관리 가맹점·중요 문서)의 관리 방식에 해당하면, 대상 이름을 '추가 자료'로·답변 내용을 '관리 내용'으로 해 부서별 추가 자료(dept_notes) 장의 항목으로 updates 에 담고 그 질문(gap)도 해소로 처리합니다. "
-            "답변이 위 정보와 어긋나면(예: 업체가 바뀌었다, 문서 위치가 다르다) reply 에서 정중하게 어느 쪽이 맞는지 확인합니다. 새 질문은 덧붙이지 않습니다."
+            "\n인계자의 답변이 위 목록의 서류·물품이나 비고 사항에 해당하면, 그 이름을 '추가 자료'로·답변 내용을 '관리 내용'으로 해 부서별 추가 자료(dept_notes) 장의 항목으로 updates 에 담고 그 질문(gap)도 해소로 처리합니다. "
+            "답변이 위 정보와 어긋나면(예: 더 이상 쓰지 않는 서류다, 이름이 바뀌었다) reply 에서 정중하게 어느 쪽이 맞는지 확인합니다. 새 질문은 덧붙이지 않습니다."
         )
     if slot_key in COLLABORATION_SLOTS or (not slot_key and not purpose):
         if info["others"]:
-            lines.append("\n### 협업 부서 정보(참고)")
+            lines.append("\n### 협업 부서・팀 인수인계 목록(참고)")
             for name, entries in info["others"].items():
-                parts = [*(f"문서 {d['name']}({d['location']})" if d["location"] else f"문서 {d['name']}" for d in entries["documents"]),
-                         *(f"가맹점 {f}" for f in entries["franchises"]), *(f"라이센스 {l['vendor']}" for l in entries["licenses"])]
-                lines.append(f"- {name}: " + ", ".join(parts))
-            lines.append("협의 상대·협업 내용이 위 부서이면 협의내용을 정리하거나 질문할 때 참고합니다.")
+                note = entries["note"].replace("\n", " / ")
+                lines.append(f"- {name}: " + (", ".join(entries["items"]) or "목록 없음") + (f" (비고: {note})" if note else ""))
+            lines.append("협의 상대·협업 내용이 위 부·팀이면 협의내용을 정리하거나 질문할 때 참고합니다.")
     return "\n".join(lines)
 
 

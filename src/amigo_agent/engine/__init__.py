@@ -63,7 +63,7 @@ def retrieve_for_slot(spec: SlotSpec, profile: dict[str, Any], kb: KBAdapter, to
     duties = str(profile.get("task_name") or profile.get("duties") or "").strip()
     if duties and spec.key in ("overview", "regular", "irregular", "leave_tasks"):
         queries.insert(0, duties)
-    if spec.key == "dept_notes":  # 부서가 관리하는 대상(라이센스 업체·가맹점·중요 문서)마다 자료에서 어떻게 다뤄지는지 찾는다
+    if spec.key == "dept_notes":  # 부·팀 인수인계 목록의 서류·물품(과 비고)마다 자료에서 어떻게 다뤄지는지 찾는다
         from ..dept_info import clean_dept_info, targets
 
         for target in targets(clean_dept_info(profile.get("dept_notes")))[:8]:
