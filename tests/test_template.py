@@ -161,7 +161,7 @@ def test_code_asks_every_empty_field_with_the_notion_question_and_ask_type():
     model_gap = {"id": "gap-1", "slot": "leave_tasks", "item_id": "leave_tasks-1", "field": "status", "question": "현재 진행단계는 어디까지인가요?", "status": "open"}
     made = _missing_field_gaps(slots, slots_for(LEAVE), [model_gap])
     # 진행 상태는 모델이 이미 묻고, 참고자료만 빠졌다. 노션 양식의 질문 예시로, 보조질문으로 묻는다
-    assert [(g["question"], g["aux"]) for g in made] == [("'홈페이지 개편'의 참고자료에 대해 여쭤볼게요. 업무 처리를 위해 가장 빈번하게 참고하는 자료는 무엇인가요?", True)]
+    assert [(g["question"], g["aux"]) for g in made] == [("'홈페이지 개편'의 참고자료에 대해 여쭤볼게요.\n업무 처리를 위해 가장 빈번하게 참고하는 자료는 무엇인가요?", True)]
     assert _missing_field_gaps(slots, slots_for(LEAVE), [model_gap, *made]) == []
 
 

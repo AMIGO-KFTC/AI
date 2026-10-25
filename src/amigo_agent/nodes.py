@@ -273,11 +273,11 @@ def _field_question(spec: Any, item: dict[str, Any], key: str) -> dict[str, Any]
     label = spec.label(key)
     field = spec.field(key)
     example = first_ask_example(spec.key, key)
-    question = f"'{name}'의 {label}에 대해 여쭤볼게요. {example}" if example else f"'{name}'의 {label}{_object_particle(label)} 알려 주시겠어요?"
+    question = f"'{name}'의 {label}에 대해 여쭤볼게요.\n{example}" if example else f"'{name}'의 {label}{_object_particle(label)} 알려 주시겠어요?"
     out: dict[str, Any] = {"question": question}
     if field is not None and field.picker == "period":
         out.update(
-            question=f"'{name}'의 {label}를 알려 주세요. 이 업무는 얼마나 자주 하나요? 정기적으로 하지 않는 업무라면 달력에서 수행 기간을 골라 주세요.",
+            question=f"'{name}'의 {label}를 알려 주세요. 이 업무는 얼마나 자주 하나요?\n정기적으로 하지 않는 업무라면 달력에서 수행 기간을 골라 주세요.",
             picker="period",
         )
     elif field is not None and field.gate and gate_question(spec.key, key):
@@ -353,14 +353,14 @@ def _embedded_gaps(slots: dict[str, Any], active: list[Any], gaps: list[Gap]) ->
             elif child.key == "milestones":
                 current = [r for r in rows if "진행" in str((r.get("fields") or {}).get("status") or "")]
                 if not rows:
-                    made.append(_gap(child, "", f"'{name}'의 추진 경과가 자료에 없음", f"'{name}' 프로젝트에 대해 여쭤볼게요. {first_ask_example('milestones', '*')}", parent_id=parent_item["id"]))
+                    made.append(_gap(child, "", f"'{name}'의 추진 경과가 자료에 없음", f"'{name}' 프로젝트에 대해 여쭤볼게요.\n{first_ask_example('milestones', '*')}", parent_id=parent_item["id"]))
                 elif current:
                     row = current[-1].get("fields") or {}
                     content = re.sub(r"\s*(함|임|중)?\.?\s*$", "", str(row.get("content") or ""))  # 문서 문체('~함.')는 질문 문장에서 뺀다
                     stage = content + (f"({row['when']})" if row.get("when") else "")
                     made.append(
                         _gap(child, "", f"'{name}'의 현재 진행 단계 확인",
-                             f"자료상으로는 '{name}' 프로젝트가 현재 '{stage}' 단계로 보입니다. 현재 진행 상태가 맞나요?",
+                             f"자료상으로는 '{name}' 프로젝트가 현재 '{stage}' 단계로 보입니다.\n현재 진행 상태가 맞나요?",
                              parent_id=parent_item["id"], gate="confirm", follow=f"'{name}' 프로젝트의 실제 현재 진행 상황을 알려 주시겠어요? 지금 어느 단계이고 다음에 무엇을 하나요?")
                     )
     return made

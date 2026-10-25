@@ -58,6 +58,6 @@ def test_code_asks_one_field_per_question():
     item = {"id": "regular-1", "title": "SSL 인증서 갱신", "fields": {"name": "SSL 인증서 갱신", "overview": "갱신", "timing": "12월", "procedure": "결제", "key_points": "만료 주의", "decisions": "자동 갱신", "references": "매뉴얼"}}
     made = _missing_field_gaps({"regular": {"items": [item]}}, [s for s in slots_for(PROFILE) if s.key == "regular"], [])
     assert [(g["field"], g["question"]) for g in made] == [("future", "'SSL 인증서 갱신' — 이 업무의 향후 과제나 발전 방향이 있나요?")]
-    assert made[0]["follow"] == "'SSL 인증서 갱신'의 향후 과제 및 발전 방향에 대해 여쭤볼게요. 현재 진행 중이거나 해결되지 않은 과제는 무엇이며, 앞으로 어떤 방향으로 개선하면 좋을까요?"
+    assert made[0]["follow"] == "'SSL 인증서 갱신'의 향후 과제 및 발전 방향에 대해 여쭤볼게요.\n현재 진행 중이거나 해결되지 않은 과제는 무엇이며, 앞으로 어떤 방향으로 개선하면 좋을까요?"
     partner = {"id": "partners-1", "title": "홍보팀", "fields": {"org": "홍보팀", "name": "홍보팀", "role": "보도자료 확인", "task": "SSL 인증서 갱신"}}
     assert _missing_field_gaps({"partners": {"items": [partner]}}, [SLOT_BY_KEY["partners"]], []) == []  # 협업관계 표의 칸은 묻지 않는다
