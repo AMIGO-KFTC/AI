@@ -8,7 +8,7 @@ from .field_guides import guide_for
 from .links import link_names_block
 from .dept_info import clean_dept_info, has_info, numbered, targets as dept_targets
 from .state import Gap, SlotState, Turn
-from .template import ASK_AUTO, ASK_AUX, ASK_HIDDEN, COVERAGE_LABELS, MODE_LABELS, SLOT_BY_KEY, SLOTS, SlotSpec, leave_period, mode_of, profile_units
+from .template import ASK_AUTO, ASK_AUX, ASK_HIDDEN, COVERAGE_LABELS, MODE_LABELS, SLOT_BY_KEY, SLOTS, SlotSpec, leave_period, mode_of, profile_units, slots_for
 
 ANALYSIS_SYSTEM = """\
 당신은 공공·금융기관의 업무 인수인계서 작성을 돕는 분석가입니다. 인계자가 올린 업무 자료(문서·메일·링크)를 근거로 인수인계서의 한 장(章)을 채웁니다.
@@ -404,6 +404,9 @@ def interpret_user(
         f"## 인계자 정보\n{profile_block(profile)}\n\n{team_section}## 진행 단계\n{stage_note}\n\n"
         f"## 현재 질문\n{gap_text}\n\n## 확인 대기 중인 정리 내용\n{pending_text or '(없음)'}\n\n"
         f"## 현재까지 정리된 항목\n{items_block(slots)}\n\n## 남은 질문\n{gaps_block(open_gaps)}\n\n"
+    # 이 인수인계서에 실리는 장만 고르게 한다(다른 버전 전용 장에 써 넣으면 문서에 나오지 않는다)
+    usable = "\n".join(f"- {s.title} [{s.key}]: {', '.join(f'{f.key}({f.label})' for f in s.fields)}" for s in slots_for(profile))
+    team_section += f"## 이 인수인계서에서 쓰는 장(updates 의 slot 은 이 중에서만 고르세요)\n{usable}\n\n"
         f"## 최근 대화\n{transcript_block(transcript)}\n\n## 인계자의 새 메시지\n{message}"
     )
 

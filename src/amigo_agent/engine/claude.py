@@ -30,7 +30,7 @@ from ..prompts import (
     auto_fill_user,
 )
 from ..state import Gap, SlotState, combine_coverage, evaluate_coverage, missing_fields, new_id, upsert_item
-from ..template import ALL_FIELD_KEYS, SLOT_BY_KEY, SLOT_KEYS, SlotSpec
+from ..template import ALL_FIELD_KEYS, SLOT_BY_KEY, SLOT_KEYS, SlotSpec, slots_for
 from ..textkit import scrub_credentials
 from . import Interpretation, InterpretInput, SlotResult, retrieve_for_slot
 
@@ -281,7 +281,12 @@ class ClaudeEngine:
         updates = []
         for up in output.updates:
             spec = SLOT_BY_KEY[up.slot]
+        usable = {s.key for s in slots_for(data.profile)}
+        dropped = 0
             fields = {fv.key: scrub_credentials(fv.value)[0] for fv in up.fields if spec.field(fv.key)}
+            if up.slot not in usable:  # 이 인수인계서에 없는 장은 문서에 나오지 않으므로 반영하지 않는다
+                dropped += 1
+                continue
             if not fields and not up.title:
                 continue
             updates.append(
@@ -293,9 +298,10 @@ class ClaudeEngine:
                     "citations": registry.citations(up.evidence_ids, hint=up.title),
                 }
             )
-        return Interpretation(
-            intent=output.intent, updates=updates, resolved_gap_ids=list(output.resolved_gap_ids), reply=output.reply.strip()
-        )
+        reply = output.reply.strip()
+        if dropped and not updates:  # 모델이 '넣었다'고 답해도 실제로 반영된 것이 없으면 그대로 알린다
+            reply = "말씀하신 내용을 넣을 항목을 찾지 못해 반영하지 못했어요. 어느 항목(예: 주요 협업관계)에 넣을지 알려 주시겠어요?"
+        return Interpretation(intent="other" if dropped and not updates else output.intent, updates=updates, resolved_gap_ids=list(output.resolved_gap_ids), reply=reply)
 
 
 def _pending_text(data: InterpretInput) -> str:
