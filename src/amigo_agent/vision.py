@@ -39,7 +39,7 @@ def make_image_reader(config: AgentConfig | None = None, client: Any | None = No
                 }],
             )
         except anthropic.AuthenticationError as exc:
-            raise RuntimeError("Claude API 인증에 실패했습니다. ANTHROPIC_API_KEY 를 확인해 주세요.") from exc
+            raise RuntimeError("Claude API 인증에 실패했습니다.\nANTHROPIC_API_KEY 를 확인해 주세요.") from exc
         except anthropic.APIError as exc:
             raise RuntimeError(f"Claude 호출에 실패했습니다({exc.__class__.__name__}).") from exc
         return "".join(getattr(block, "text", "") for block in response.content if getattr(block, "type", None) == "text").strip()

@@ -156,7 +156,7 @@ class ClaudeLLM:
             response = self._create(system=system, messages=messages, schema=schema, effort=effort, max_tokens=max_tokens, tools=tools)
             stop = getattr(response, "stop_reason", None)
             if stop == "refusal":
-                raise LLMRefusal("Claude 가 이 요청에 대한 응답을 거절했습니다. 자료 내용을 확인해 주세요.")
+                raise LLMRefusal("Claude 가 이 요청에 대한 응답을 거절했습니다.\n자료 내용을 확인해 주세요.")
             if stop == "pause_turn":
                 messages.append({"role": "assistant", "content": response.content})
                 continue
@@ -166,7 +166,7 @@ class ClaudeLLM:
                 tool_rounds += 1
                 continue
             if stop == "max_tokens":
-                raise LLMOutputError("Claude 응답이 너무 길어 잘렸습니다. 다시 시도해 주세요.")
+                raise LLMOutputError("Claude 응답이 너무 길어 잘렸습니다.\n다시 시도해 주세요.")
             return parse_output(output_model, final_text(response.content))
         raise LLMOutputError("도구 호출이 반복되어 결과를 받지 못했습니다.")
 
@@ -212,19 +212,19 @@ class ClaudeLLM:
         try:
             response = self.client.beta.messages.create(**kwargs)
         except anthropic.AuthenticationError as exc:
-            raise LLMError("Claude API 인증에 실패했습니다. ANTHROPIC_API_KEY 를 확인해 주세요.") from exc
+            raise LLMError("Claude API 인증에 실패했습니다.\nANTHROPIC_API_KEY 를 확인해 주세요.") from exc
         except anthropic.PermissionDeniedError as exc:
-            raise LLMError("Claude API 사용 권한이 없습니다. API 키의 권한을 확인해 주세요.") from exc
+            raise LLMError("Claude API 사용 권한이 없습니다.\nAPI 키의 권한을 확인해 주세요.") from exc
         except anthropic.NotFoundError as exc:
             raise LLMError(f"모델을 찾을 수 없습니다: {self.config.model} (AMIGO_LLM_MODEL 확인)") from exc
         except anthropic.RateLimitError as exc:
-            raise LLMError("Claude API 요청 한도를 초과했습니다. 잠시 후 다시 시도해 주세요.") from exc
+            raise LLMError("Claude API 요청 한도를 초과했습니다.\n잠시 후 다시 시도해 주세요.") from exc
         except anthropic.BadRequestError as exc:
             raise LLMError(f"Claude API 요청 형식 오류: {exc.message}") from exc
         except anthropic.APIStatusError as exc:
-            raise LLMError(f"Claude API 오류가 발생했습니다(HTTP {exc.status_code}). 잠시 후 다시 시도해 주세요.") from exc
+            raise LLMError(f"Claude API 오류가 발생했습니다(HTTP {exc.status_code}).\n잠시 후 다시 시도해 주세요.") from exc
         except anthropic.APIConnectionError as exc:
-            raise LLMError("Claude API 에 연결하지 못했습니다. 네트워크(프록시) 설정을 확인해 주세요.") from exc
+            raise LLMError("Claude API 에 연결하지 못했습니다.\n네트워크(프록시) 설정을 확인해 주세요.") from exc
         usage = getattr(response, "usage", None)
         if usage is not None:
             counted = self.usage.add(usage)
