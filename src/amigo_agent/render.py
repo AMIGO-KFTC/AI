@@ -17,7 +17,7 @@ from typing import Any
 from .periods import plan_months
 from .relevance import bigrams
 from .state import Gap, SlotState, item_label, normalize_title
-from .template import MODE_LABELS, PARTNER_SCOPES, SLOT_BY_KEY, FieldSpec, SlotSpec, leave_period, mode_of, profile_units, slots_for
+from .template import MODE_LABELS, is_office, PARTNER_SCOPES, SLOT_BY_KEY, FieldSpec, SlotSpec, leave_period, mode_of, profile_units, slots_for
 
 class _Citations:
     """근거 번호. 장 순서 → 항목 순서 → 항목의 근거 순서로 매기고, 같은 (출처 표기, 조각) 은 같은 번호(BackEnd routers/evidence.py 와 같은 규칙)."""
@@ -182,6 +182,13 @@ def _embedded_rows(child: SlotSpec, rows: list[dict], span: int) -> list[str]:
     return body
 
 
+def _value_or_hint(f: FieldSpec, fields: dict[str, Any], md: bool = False) -> str:
+    """칸 값. 비어 있고 안내 문구(placeholder)가 있는 칸은 흐린 안내를 보여 준다(인계자가 직접 적거나 행을 지운다)."""
+    if not _clean(fields.get(f.key)) and f.placeholder:
+        return f'<span class="doc-hint">{html.escape(f.placeholder)}</span>'
+    return _cell(fields.get(f.key)) if md else _h(fields.get(f.key))
+
+
 def _children_for(child: SlotSpec, child_items: list[dict], name: str) -> list[dict]:
     return [c for c in child_items if same_name(str((c.get("fields") or {}).get(child.embed_link) or ""), name)]
 
@@ -202,14 +209,14 @@ def _render_cards(out: list[str], spec, items: list[dict], cites: _Citations, ch
         out += [f"### {index}) {_cell(name)}{marks.get(spec.title_field, '')}", ""]
         if not children:
             out += ["| 항목 | 내용 |", "|---|---|"]
-            out += [f"| {f.label} | {_cell(fields.get(f.key))}{marks.get(f.key, '')} |" for f in shown]
+            out += [f"| {f.label} | {_value_or_hint(f, fields, md=True)}{marks.get(f.key, '')} |" for f in shown]
             out.append("")
             continue
         span = max(len(child_spec.shown) for child_spec, _ in children)
         wide = f' colspan="{span}"'
         rows = ["<table>", f"<tr><th>항목</th><th{wide}>내용</th></tr>"]
         for f in shown:
-            rows.append(f"<tr><th>{_h(f.label)}</th><td{wide}>{_h(fields.get(f.key))}{marks.get(f.key, '')}</td></tr>")
+            rows.append(f"<tr><th>{_h(f.label)}</th><td{wide}>{_value_or_hint(f, fields)}{marks.get(f.key, '')}</td></tr>")
             for child_spec, child_items in children:
                 if child_spec.embed_after == f.key:
                     rows += _embedded_rows(child_spec, _children_for(child_spec, child_items, str(name or "")), span)
@@ -275,7 +282,7 @@ def render_document(
         ("인수자", profile.get("successor")),
         ("휴가 기간", leave_period(profile)),
         ("인계 일자", profile.get("handover_date")),
-        ("인계 유형", MODE_LABELS[mode_of(profile)]),
+        ("인계 유형", MODE_LABELS[mode_of(profile)] + (" · 원내 양식(팀장)" if is_office(profile) else "")),
         ("단위 업무명", units or profile.get("task_name")),
         ("담당 업무", profile.get("duties")),
         ("작성", f"{today.isoformat()} · AMIGO 자동 작성 초안 v{version}"),

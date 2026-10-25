@@ -47,6 +47,7 @@ class FieldSpec:
     specific: bool = False  # 보조·예/아니요 항목이라도 자료에서 구체적인 사례를 찾았으면 AI 가 그 사례를 들어 바로 묻는다
     picker: str = ""  # "period": 주기 선택 또는 달력 기간 선택
     answers_only: bool = False  # 업로드 자료로는 채우지 않고 질의응답으로만 채운다
+    placeholder: str = ""  # 묻지 않는 칸이 비었을 때 문서에 흐리게 보여 줄 안내(인계자가 직접 적거나 행을 지운다)
 
 
 @dataclass(frozen=True)
@@ -134,6 +135,24 @@ class SlotSpec:
 
 
 BOTH = (MODE_REASSIGNMENT, MODE_LEAVE)
+FORM_OFFICE = "office"  # 팀장이 쓰는 인수인계서: template 의 양식 대신 원내 양식(OFFICE_ITEMS)으로 만든다(profile["form"])
+
+# 원내 인수인계서 양식(노션 '수정사항' 10.25 '팀장님용 인수인계서는 원내 양식으로'): (목록, 비고). 8~10번은 양식에서 생략한다.
+OFFICE_ITEMS: tuple[tuple[str, str], ...] = (
+    ("1. 주요 사업계획 및 집행상황표", ""),
+    ("2. 주요 현안사항", ""),
+    ("3. 주요 미결사항의 경과 및 처리대책", ""),
+    ("4. 제계약서 명세표", ""),
+    ("5. 중요 인장 보관 명세표", "인장명, 인영, 보관자 직책·성명"),
+    ("6. 보관문서목록표", ""),
+    ("7. 전산기기 및 관련 통신장비 보유현황", "리스 도입분 포함"),
+    ("11. 담당규정목록", "부서간·팀(반, 사무소)간 업무이관시"),
+    ("12. 실무지침", ""),
+    ("13. 담당업무 매뉴얼", "최신 내용으로 정비여부 확인"),
+    ("14. 주기적 업무 체크리스트", ""),
+    ("15. 기타 주요사항", ""),
+)
+OFFICE_QUESTION = "인수자가 꼭 알아야 할 주요 현안이나 아직 끝나지 않은 일, 업무하면서 주의할 점이 있다면 편하게 알려 주세요."
 OTHER_MATERIALS = "기타 자료"
 PARTNER_SCOPES = ("외부", "내부")  # 협업 대상 표를 나누는 순서. 우리 기관 소속이면 내부, 그 밖(외부 기관·업체)은 외부
 
@@ -174,7 +193,8 @@ SLOTS: tuple[SlotSpec, ...] = (
             FieldSpec("key_points", "중점 관리사항", "무엇을 중요하게 관리하고 주의해야 하는가?", gate=True, specific=True),
             FieldSpec("decisions", "주요 의사결정 및 판단 근거", "무엇을, 왜 그렇게 결정했는가?", gate=True, specific=True),
             FieldSpec("future", "향후 과제 및 발전 방향", "무엇을 이어가고 개선해야 하는가?", ask=ASK_AUX, gate=True),
-            FieldSpec("references", "기타(참고자료 등)", "어떤 자료와 규정을 참고해야 하는가?", ask=ASK_AUX),
+            FieldSpec("references", "기타(참고자료 등)", "어떤 자료와 규정을 참고해야 하는가?", ask=ASK_AUTO,
+                      placeholder="인수자가 참고할 좋은 노하우, 팁, 참고자료가 있다면 작성해 주세요."),
         ),
         min_items=1,
         queries=("매일 매주 매월 정기 반복 업무", "주기적 점검 보고 일정 기한", "연간 일정 분기 갱신 신청", "업무 절차 처리 방법"),
@@ -210,8 +230,6 @@ SLOTS: tuple[SlotSpec, ...] = (
         title_key="name",
         split_field="scope",
         split_drop=(("내부", ("phone",)),),
-        gate_question="'{name}' 업무를 하면서 협업할 때 유의해야 할 사항이 있는 사람(부서)이 있나요?",
-        follow_question="'{name}' 업무에서 누구(소속·이름)와 협업할 때 어떤 점을 유의해야 하나요?",
     ),
     # ------------------------------------------------------------------ [인사발령] C
     SlotSpec(
@@ -374,9 +392,31 @@ SLOTS: tuple[SlotSpec, ...] = (
     ),
 )
 
-SLOT_BY_KEY: dict[str, SlotSpec] = {s.key: s for s in SLOTS}
-SLOT_KEYS: tuple[str, ...] = tuple(s.key for s in SLOTS)
-ALL_FIELD_KEYS: tuple[str, ...] = tuple(dict.fromkeys(f.key for s in SLOTS for f in s.fields))
+# 팀장용 원내 양식은 별도 장 하나로 만든다(인사발령·장기휴가 양식에는 들어가지 않는다).
+OFFICE_SLOT = SlotSpec(
+    key="office_items",
+    title="원내 인수인계서 양식",
+    description="팀장이 쓰는 원내 양식의 인수인계 목록. 항목은 아래 정해진 목록이며 항목 제목·목록(name)에는 목록 이름을 번호까지 글자 그대로 쓴다: "
+    + ", ".join(name for name, _ in OFFICE_ITEMS)
+    + ". 각 목록에 해당하는 서류·현황·내용을 근거 자료에서 찾아 '내용'에 개괄식으로 짧게 적고(여럿이면 ' / '로 이어 씀) 근거 ID 를 붙인다. "
+    "자료에서 하나라도 찾은 목록은 모두 항목으로 만들고, 찾지 못한 목록만 비워 둔다. 목록에 없는 항목은 만들지 않는다. "
+    "따로 질문하지 않고, 인수자에게 꼭 필요한 현안·주의점만 한 번 포괄적으로 묻는다.",
+    fields=(
+        FieldSpec("name", "목록", ask=ASK_AUTO),
+        FieldSpec("content", "내용", "이 목록에 해당하는 서류·현황·내용(자료에서 찾은 것)", ask=ASK_AUTO),
+        FieldSpec("note", "비고", "원내 양식의 비고(작성 시 유의사항)", ask=ASK_AUTO),
+    ),
+    min_items=1,
+    modes=(),
+    queries=("사업계획 집행 현황 현안", "미결사항 처리대책 계약서 명세", "인장 보관 문서 목록 전산기기 보유현황", "담당 규정 실무지침 매뉴얼 체크리스트"),
+    keywords=("사업계획", "현안", "미결", "계약", "인장", "문서", "전산", "규정", "지침", "매뉴얼", "체크리스트"),
+    default_question=OFFICE_QUESTION,
+    seed="office",
+)
+
+SLOT_BY_KEY: dict[str, SlotSpec] = {s.key: s for s in (*SLOTS, OFFICE_SLOT)}
+SLOT_KEYS: tuple[str, ...] = tuple(s.key for s in (*SLOTS, OFFICE_SLOT))
+ALL_FIELD_KEYS: tuple[str, ...] = tuple(dict.fromkeys(f.key for s in (*SLOTS, OFFICE_SLOT) for f in s.fields))
 
 
 def mode_of(profile: dict[str, Any] | None) -> str:
@@ -397,9 +437,16 @@ def leave_period(profile: dict[str, Any] | None) -> str:
 
 
 def slots_for(profile: dict[str, Any] | None) -> tuple[SlotSpec, ...]:
-    """이번 인수인계서에 쓰는 슬롯(버전별로 장 구성이 다르다)."""
+    """이번 인수인계서에 쓰는 슬롯(버전별로 장 구성이 다르다). 팀장이 쓰는 인수인계서(form=office)는 원내 양식 한 장만 쓴다."""
+    if is_office(profile):
+        return (OFFICE_SLOT,)
     mode = mode_of(profile)
     return tuple(s for s in SLOTS if mode in s.modes)
+
+
+def is_office(profile: dict[str, Any] | None) -> bool:
+    """팀장이 쓰는 인수인계서(원내 양식)인지."""
+    return str((profile or {}).get("form") or "").strip().lower() == FORM_OFFICE
 
 
 def profile_units(profile: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -425,6 +472,8 @@ def seed_items(spec: SlotSpec, profile: dict[str, Any] | None) -> list[dict[str,
         return [{"name": u["name"]} for u in units if u["name"]]
     if spec.seed in ("regular", "irregular"):
         return [{"name": task, "unit": u["name"]} for u in units for task in u[spec.seed]]
+    if spec.seed == "office":
+        return [{"name": name, "note": note} for name, note in OFFICE_ITEMS]
     if spec.seed == "leave":
         kinds = (("regular", "정기"), ("irregular", "비정기"))
         return [{"name": task, "task_type": label} for kind, label in kinds for u in units for task in u[kind]]
