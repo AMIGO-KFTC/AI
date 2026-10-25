@@ -265,7 +265,7 @@ def _missing_field_gaps(slots: dict[str, Any], active: list[Any], gaps: list[Gap
                 if key in asked_fields or _label_asked(label, asked):
                     continue
                 example = first_ask_example(spec.key, key)
-                question = f"'{name}'의 {label}에 대해 여쭤볼게요. {example}" if example else f"'{name}'의 {label}{_object_particle(label)} 알려 주시겠어요?"
+                question = f"'{name}'의 {label}에 대해 여쭤볼게요.\n{example}" if example else f"'{name}'의 {label}{_object_particle(label)} 알려 주시겠어요?"
                 made.append(
                     {
                         "id": new_id("gap"),
@@ -315,7 +315,7 @@ def _unit_check_gaps(profile: dict[str, Any], slots: dict[str, Any], gaps: list[
                 "field": "",
                 "unit_check": True,
                 "description": f"자료에서 찾은 단위업무 '{name}'이(가) 인계 대상인지 확인 필요",
-                "question": f"자료에서 '{name}' 업무를 찾았어요. 이 업무도 이번에 인계하는 단위업무가 맞나요?",
+                "question": f"자료에서 '{name}' 업무를 찾았어요.\n이 업무도 이번에 인계하는 단위업무가 맞나요?",
                 "priority": 1,
                 "ask_for_document": False,
                 "status": "open",
@@ -441,11 +441,11 @@ def summarize(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
     remaining = len(open_gaps(gaps))
     if remaining:
         closing = (
-            f"부족한 부분을 채우기 위해 **한 번에 하나씩** 질문드릴게요(모두 {remaining}개). "
+            f"부족한 부분을 채우기 위해 **한 번에 하나씩** 질문드릴게요(모두 {remaining}개).\n"
             "모르는 내용은 '건너뛰기', 관련 파일이 있으면 언제든 첨부해 주세요."
         )
     else:
-        closing = "자료만으로 필요한 정보가 충족되었어요. 바로 인수인계서를 작성할게요."
+        closing = "자료만으로 필요한 정보가 충족되었어요.\n바로 인수인계서를 작성할게요."
     message = f"{narrative}\n\n" + "\n".join(lines) + f"\n\n{closing}"
     coverage = {k: (slots.get(k) or {}).get("coverage", "missing") for k in (s.key for s in slots_for(state.get("profile")))}
     summary_turn = _say("summary", message, coverage=coverage)
@@ -468,7 +468,7 @@ def choose_next(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, 
     if remaining:  # 질문 수는 제한하지 않는다(남은 질문을 모두 묻는다)
         return {"next_action": "ask"}
     ack = state.get("ack") or ""
-    text = "질문을 모두 마쳤어요. 건너뛴 내용은 화면 오른쪽 '확인 필요 사항'에 남겨 두고 인수인계서를 작성할게요."
+    text = "질문을 모두 마쳤어요.\n건너뛴 내용은 화면 오른쪽 '확인 필요 사항'에 남겨 두고 인수인계서를 작성할게요."
     done = _say("info", (ack + "\n\n" if ack else "") + text)
     return {"next_action": "compose", "ack": "", "transcript": [done]}
 
@@ -530,7 +530,7 @@ def skip_gap(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any
     return {
         "gaps": gaps,
         "pending": {},
-        "ack": "건너뛰었어요. 이 내용은 화면 오른쪽 '확인 필요 사항'으로 남겨 둘게요.",
+        "ack": "건너뛰었어요.\n이 내용은 화면 오른쪽 '확인 필요 사항'으로 남겨 둘게요.",
         "last_intent": "skip",
         "transcript": [user],
     }
@@ -591,7 +591,7 @@ def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
     intent = result.intent
     if redacted:
         out["transcript"].append(
-            _say("info", f"🔒 비밀번호는 보안상 기록하지 않았어요({CREDENTIAL_MASK}). ID/PW 는 완성된 인수인계서를 출력한 뒤 시스템 접근 계정 표에 직접 적어 주세요.")
+            _say("info", f"🔒 비밀번호는 보안상 기록하지 않았어요({CREDENTIAL_MASK}).\nID/PW 는 완성된 인수인계서를 출력한 뒤 시스템 접근 계정 표에 직접 적어 주세요.")
         )
 
     if intent == "finish":
@@ -639,7 +639,7 @@ def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
             rounds = int(pending.get("rounds", 0)) + 1 if pending else 0
             if rounds >= MAX_CONFIRM_ROUNDS:
                 # 같은 내용을 여러 번 고쳐도 확인이 끝나지 않으면 마지막 정리로 반영하고 다음 질문으로 넘어간다(무한 반복 방지).
-                out.update(pending={}, last_intent="confirm", ack="고쳐 주신 내용으로 반영해 둘게요. 문서 초안에서도 다시 고치실 수 있어요.")
+                out.update(pending={}, last_intent="confirm", ack="고쳐 주신 내용으로 반영해 둘게요.\n문서 초안에서도 다시 고치실 수 있어요.")
                 return out
             out["transcript"].append(
                 _say("confirm", result.reply or "정리한 내용이 맞는지 확인해 주세요.", quick_replies=QUICK_REPLIES_CONFIRM, refs=refs)
@@ -649,11 +649,11 @@ def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
         return out
 
     # 되묻기·잡담·해석 불가: 답한 뒤 같은 질문에 대한 답을 기다린다. 질문이 있는 단계에서는 질문을 다시 보여 주고, 건너뛰는 방법도 알려 준다.
-    reply = result.reply or "말씀하신 내용을 정확히 이해하지 못했어요. 조금 더 구체적으로 알려 주시겠어요?"
+    reply = result.reply or "말씀하신 내용을 정확히 이해하지 못했어요.\n조금 더 구체적으로 알려 주시겠어요?"
     if stage != "review" and current and result.intent == "other":
         # 모델(Opus)의 설명은 그대로 쓴다. '다음 질문으로 넘어가겠습니다'처럼 사실과 다른 문장만 정해진 문구로 바꾼다.
         if MOVING_ON_RE.search(reply):
-            reply = "말씀하신 내용만으로는 답을 알 수 없어서 넘어가지 않았어요. 다시 여쭤볼게요."
+            reply = "말씀하신 내용만으로는 답을 알 수 없어서 넘어가지 않았어요.\n다시 여쭤볼게요."
         question = current.get("question", "")
         asked_again = "?" in reply or len(bigrams(question) & bigrams(reply)) >= len(bigrams(question)) * 0.5
         if question and not asked_again:  # 모델이 질문을 다시 했으면 원래 질문은 덧붙이지 않는다(한 메시지에 질문 하나)

@@ -125,9 +125,9 @@ class HandoverAgent:
         """
         with self._lock(thread_id):
             if not self._has_state(thread_id):
-                raise AgentStateError("아직 분석을 시작하지 않았습니다. 자료를 올리고 분석을 먼저 시작해 주세요.")
+                raise AgentStateError("아직 분석을 시작하지 않았습니다.\n자료를 올리고 분석을 먼저 시작해 주세요.")
             if not self.is_waiting(thread_id):
-                raise AgentStateError("이전 작업이 끝나지 않았습니다. 잠시 후 다시 시도하거나 '다시 시도'를 눌러 주세요.")
+                raise AgentStateError("이전 작업이 끝나지 않았습니다.\n잠시 후 다시 시도하거나 '다시 시도'를 눌러 주세요.")
             config = self._config(thread_id)
             values = self.graph.get_state(config).values or {}
             stage = values.get("stage")
@@ -255,9 +255,9 @@ class HandoverAgent:
     def _resume(self, thread_id: str, payload: dict[str, Any], kb: Any, on_event: EventHandler | None) -> TurnResult:
         with self._lock(thread_id):
             if not self._has_state(thread_id):
-                raise AgentStateError("아직 분석을 시작하지 않았습니다. 자료를 올리고 분석을 먼저 시작해 주세요.")
+                raise AgentStateError("아직 분석을 시작하지 않았습니다.\n자료를 올리고 분석을 먼저 시작해 주세요.")
             if not self.is_waiting(thread_id):
-                raise AgentStateError("이전 작업이 끝나지 않았습니다. 잠시 후 다시 시도하거나 '다시 시도'를 눌러 주세요.")
+                raise AgentStateError("이전 작업이 끝나지 않았습니다.\n잠시 후 다시 시도하거나 '다시 시도'를 눌러 주세요.")
             return self._run(thread_id, Command(resume=payload), kb, on_event)
 
     def _run(self, thread_id: str, graph_input: Any, kb: Any, on_event: EventHandler | None) -> TurnResult:
