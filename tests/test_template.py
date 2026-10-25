@@ -38,11 +38,14 @@ def test_each_field_has_the_ask_type_of_the_notion_checklist():
     assert regular.field("timing").picker == "period"
     assert regular.field("key_points").gate and regular.field("decisions").gate
     assert regular.field("future").ask == ASK_AUX and regular.field("future").gate
-    assert regular.field("references").ask == ASK_AUX and regular.field("references").label == "기타(참고자료 등)"
+    assert regular.field("references").ask == ASK_AUTO and regular.field("references").placeholder  # 묻지 않고 문서에 흐린 안내(노션 표)
+    assert regular.field("references").label == "기타(참고자료 등)"
     # 협업관계: 유의사항만 묻는다(나머지 칸은 자료로)
     for key in ("partners", "stakeholders"):
         spec = SLOT_BY_KEY[key]
-        assert {f.ask for f in spec.shown} == {ASK_AUTO} and spec.gate_question and spec.follow_question
+        assert {f.ask for f in spec.shown} == {ASK_AUTO}
+    assert not SLOT_BY_KEY["partners"].gate_question  # 정기: 자료에 유의사항이 없으면 묻지 않고 문서에서 고친다(노션 표)
+    assert SLOT_BY_KEY["stakeholders"].gate_question
     # C. 비정기: 프로젝트 개요 미질의, 의사결정 예/아니요, 기타(중점 관리사항) 보조질문(자료에서 찾으면 그 사항을 묻는다)
     irregular = SLOT_BY_KEY["irregular"]
     assert irregular.field("overview").ask == ASK_AUTO and irregular.field("decisions").gate
@@ -170,11 +173,11 @@ def test_gate_and_picker_questions_for_regular_tasks():
 
     item = {"id": "regular-1", "title": "월간 보고", "fields": {"name": "월간 보고", "procedure": "1. 취합"}}
     made = {g["field"]: g for g in _missing_field_gaps({"regular": {"items": [item]}}, [SLOT_BY_KEY["regular"]], [])}
-    assert set(made) == {"timing", "key_points", "decisions", "future", "references"}  # 업무 개요는 묻지 않는다
+    assert set(made) == {"timing", "key_points", "decisions", "future"}  # 업무 개요·기타(참고자료 등)는 묻지 않는다
     assert made["timing"]["picker"] == "period"
     assert made["decisions"]["gate"] == "ask" and "주요하게 결정한 사항이 있나요?" in made["decisions"]["question"]
     assert "어떤 이유와 기준으로 결정했나요?" in made["decisions"]["follow"]  # 예면 노션 질문 예시로 이어서 묻는다
-    assert made["future"]["gate"] == "ask" and made["future"]["aux"] and made["references"]["aux"]
+    assert made["future"]["gate"] == "ask" and made["future"]["aux"]
     assert not made["key_points"]["aux"]
 
 
@@ -211,3 +214,38 @@ def test_collaboration_tables_leave_out_the_givers_own_team():
     ]}
     settle_items(SLOT_BY_KEY["partners"], profile, slot)
     assert [it["id"] for it in slot["items"]] == ["p2"]  # 같은 팀은 협업관계 표에 넣지 않는다
+
+
+def test_team_lead_handover_uses_the_office_form_and_asks_once():
+    from amigo_agent.template import OFFICE_ITEMS
+
+    profile = {**PROFILE, "form": "office"}
+    assert keys(profile) == ["office_items"]
+    agent = HandoverAgent()
+    snap = agent.start("office1", profile, FakeKB()).snapshot
+    assert [it["title"] for it in snap["slots"]["office_items"]["items"]] == [name for name, _ in OFFICE_ITEMS]  # 8~10번은 생략
+    assert len(snap["gaps"]) == 1 and snap["gaps"][0]["aux"]  # 암묵지는 한 번만 포괄적으로 묻는다
+    doc = agent.finish("office1", FakeKB()).snapshot["document"]
+    assert "## 1. 원내 인수인계서 양식" in doc and "| 목록 | 내용 | 비고 |" in doc and "| 5. 중요 인장 보관 명세표 | - | 인장명, 인영, 보관자 직책·성명 |" in doc
+    assert "정기업무" not in doc and "원내 양식(팀장)" in doc
+
+
+def test_leave_contacts_leave_out_the_givers_own_team():
+    from amigo_agent.nodes import settle_items
+
+    profile = {**LEAVE, "organization": "디지털전략부 · 웹서비스팀"}
+    slot = {"items": [{"id": "c1", "title": "김하늘", "fields": {"org": "웹서비스팀", "name": "김하늘"}}, {"id": "c2", "title": "박지훈", "fields": {"org": "재무팀", "name": "박지훈"}}]}
+    settle_items(SLOT_BY_KEY["contacts"], profile, slot)
+    assert [it["id"] for it in slot["items"]] == ["c2"]
+
+
+def test_regular_references_show_a_faded_hint_when_empty():
+    from datetime import date
+
+    from amigo_agent import render_document
+    from amigo_agent.state import empty_slots
+
+    slots = empty_slots()
+    slots["regular"]["items"] = [{"id": "r1", "title": "월간 보고", "fields": {"name": "월간 보고"}, "citations": []}]
+    md = render_document(profile={"name": "김민수"}, slots=slots, gaps=[], sources=[], version=1, today=date(2026, 10, 25))
+    assert '<span class="doc-hint">인수자가 참고할 좋은 노하우, 팁, 참고자료가 있다면 작성해 주세요.</span>' in md

@@ -15,6 +15,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from ..config import AgentConfig
+from ..field_guides import cap_element_questions
 from ..kb import Evidence, EvidenceRegistry, KBAdapter
 from ..llm import SEARCH_TOOL, ClaudeLLM, LLMOutputError
 from ..prompts import (
@@ -209,7 +210,8 @@ class ClaudeEngine:
                     "status": "open",
                 }
             )
-        return SlotResult(slot=slot, gaps=gaps)
+        # 노션 표가 묻는 세부사항을 정해 둔 칸(수행 절차: 순서 확인·검토 기준·승인 절차)은 세부사항마다 질문 하나만 남긴다.
+        return SlotResult(slot=slot, gaps=cap_element_questions(spec.key, gaps))
 
     def plan_questions(self, profile: dict[str, Any], gaps: list[Gap]) -> tuple[list[str], set[str]]:
         """장별 질문 후보의 중복을 찾는다 → (남은 질문 id, 뺄 질문 id). 묻는 순서는 모델이 아니라 코드가 양식 순서로 정한다(questions.rank_by_template)."""
@@ -279,14 +281,14 @@ class ClaudeEngine:
             max_tool_rounds=2,
         )
         updates = []
-        for up in output.updates:
-            spec = SLOT_BY_KEY[up.slot]
         usable = {s.key for s in slots_for(data.profile)}
         dropped = 0
-            fields = {fv.key: scrub_credentials(fv.value)[0] for fv in up.fields if spec.field(fv.key)}
+        for up in output.updates:
             if up.slot not in usable:  # 이 인수인계서에 없는 장은 문서에 나오지 않으므로 반영하지 않는다
                 dropped += 1
                 continue
+            spec = SLOT_BY_KEY[up.slot]
+            fields = {fv.key: scrub_credentials(fv.value)[0] for fv in up.fields if spec.field(fv.key)}
             if not fields and not up.title:
                 continue
             updates.append(

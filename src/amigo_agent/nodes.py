@@ -28,7 +28,7 @@ from .engine import Engine, Interpretation, InterpretInput, SlotResult
 from .engine.offline import OfflineEngine
 from .kb import KBAdapter
 from .parties import consolidate_parties, remap_ids
-from .field_guides import first_ask_example, gate_question, guide_for
+from .field_guides import AUX, element_askable, first_ask_example, gate_question, match_element
 from .questions import keep_order, rank_by_template
 from .relevance import bigrams, is_none_answer
 from .llm import LLMError, LLMOutputError
@@ -53,6 +53,7 @@ from .state import (
     upsert_item,
 )
 from .dept_info import clean_dept_info, has_info, targets as dept_targets
+from .template import FieldSpec
 from .template import (
     ASK_AUX,
     ASK_MAIN,
@@ -61,7 +62,10 @@ from .template import (
     SLOT_BY_KEY,
     STAGE_LABEL,
     STAGE_NUMBER,
+    OFFICE_QUESTION,
+    OFFICE_SLOT,
     has_seeds,
+    is_office,
     profile_units,
     seed_items,
     slots_for,
@@ -229,7 +233,7 @@ def settle_items(spec: Any, profile: dict[str, Any], slot: dict[str, Any]) -> No
     """
     items = slot.setdefault("items", [])
     seeds = seed_items(spec, profile)
-    if spec.seed and has_seeds(profile) and (seeds or spec.seed == "units"):
+    if spec.seed == "office" or (spec.seed and has_seeds(profile) and (seeds or spec.seed == "units")):
         settled: list[dict[str, Any]] = []
         for seed in seeds:
             match = next((it for it in items if it not in settled and normalize_title(item_label(spec, it)) == normalize_title(seed["name"])), None)
@@ -270,7 +274,7 @@ def settle_items(spec: Any, profile: dict[str, Any], slot: dict[str, Any]) -> No
     slot["coverage"] = evaluate_coverage(spec, items)
 
 
-SAME_TEAM_EXCLUDED = ("partners", "stakeholders")  # 협업관계 표에는 인계자와 같은 팀 사람을 넣지 않는다(노션 10.25)
+SAME_TEAM_EXCLUDED = ("partners", "stakeholders", "contacts")  # 협업관계·주요 연락망 표에는 인계자와 같은 팀 사람을 넣지 않는다(노션 10.25)
 
 
 def own_team(profile: dict[str, Any]) -> str:
@@ -323,7 +327,8 @@ def _object_particle(word: str) -> str:
 
 
 def _field_question(spec: Any, item: dict[str, Any], key: str) -> dict[str, Any]:
-    """빈 칸 하나를 묻는 코드 질문의 문장과 묻는 방식(예/아니요·주기 선택). 노션 양식의 질문 예시가 있으면 그 문장 그대로 묻는다."""
+    """빈 칸 하나를 묻는 코드 질문의 문장과 묻는 방식(예/아니요·주기 선택).
+    노션 양식의 구체적 질문 예시(첫 필수 세부사항을 묻는 문장)가 있으면 그 문장으로, 없으면 보완 질문 예시 문장 그대로 묻는다(first_ask_example)."""
     name = item_label(spec, item)
     label = spec.label(key)
     field = spec.field(key)
@@ -436,12 +441,23 @@ def _empty_slot_gaps(profile: dict[str, Any], slots: dict[str, Any], active: lis
     return made
 
 
+def _office_gaps(profile: dict[str, Any], slots: dict[str, Any], gaps: list[Gap]) -> list[Gap]:
+    """팀장용 원내 양식: 목록별 질문은 하지 않고, 인수자에게 필요한 현안·주의점(암묵지)만 한 번 포괄적으로 묻는다. 답은 '기타 주요사항' 등 맞는 목록에 정리한다."""
+    if not is_office(profile) or any(g.get("slot") == OFFICE_SLOT.key for g in gaps):
+        return []
+    items = (slots.get(OFFICE_SLOT.key) or {}).get("items", [])
+    target = next((it for it in items if item_label(OFFICE_SLOT, it).startswith("15.")), items[-1] if items else None)
+    if target is None:
+        return []
+    return [_gap(OFFICE_SLOT, target["id"], "현안·미결사항·주의점(암묵지) 확인", OFFICE_QUESTION, field="content", aux=True)]
+
+
 def allowed_gap(gap: Gap, slots: dict[str, Any], profile: dict[str, Any]) -> bool:
     """엔진(모델)이 제안한 질문 중 양식의 묻는 칸에 맞는 것만 남긴다.
 
     - 묻지 않는 장·칸(미질의·내부 값, 카드 안 표, 질의응답으로만 채우는 칸)과 항목을 정하지 않은 질문은 버린다(필요한 질문은 코드가 만든다).
     - 칸이 통째로 비었으면 코드가 노션 질문 예시 문장으로 묻는다. 모델 질문은 자료에서 구체적인 사례를 찾아 묻는 칸(중점 관리사항·의사결정 등)만 남긴다.
-    - 칸에 값이 있으면 빠진 세부사항(element)만 묻는 질문이어야 한다.
+    - 칸에 값이 있으면 빠진 세부사항(element)만 묻는 질문이어야 한다. 노션 표가 묻는 세부사항을 정해 둔 칸(수행 절차)은 그 세부사항만 묻는다.
     """
     spec = SLOT_BY_KEY.get(gap.get("slot", ""))
     if spec is None or spec.embed_into or not gap.get("item_id") or not gap.get("field"):
@@ -455,20 +471,17 @@ def allowed_gap(gap: Gap, slots: dict[str, Any], profile: dict[str, Any]) -> boo
         return False
     filled = bool(str((item.get("fields") or {}).get(field.key) or "").strip())
     if filled:
-        return bool(str(gap.get("element") or "").strip())
+        element = str(gap.get("element") or "").strip()
+        return bool(element) and element_askable(spec.key, field.key, element)
     if field.specific:
         return True
     return ask == ASK_MAIN and not field.gate and not field.picker and not first_ask_example(spec.key, field.key)
 
 
 def element_is_aux(slot_key: str, field_key: str, element: str) -> bool:
-    """빠진 세부사항이 노션 양식의 '(보조)' 세부사항이면 보조질문으로 묻는다(예: 수행 절차의 단계별 자료·검토 기준·승인 절차)."""
-    guide = guide_for(slot_key, field_key)
-    if not guide or not element.strip():
-        return False
-    target = bigrams(element)
-    best = max(guide.elements, key=lambda e: len(bigrams(e) & target), default="")
-    return best.startswith("(보조)") and len(bigrams(best) & target) >= 2
+    """빠진 세부사항이 노션 양식의 '(보조)' 세부사항이면 보조질문으로 묻는다(예: 수행 절차의 검토 기준·승인 절차).
+    '(필수)'(노션 굵은 글씨) 세부사항은 반드시 채워야 하므로 필수 질문으로 묻는다."""
+    return match_element(slot_key, field_key, element).startswith(AUX)
 
 
 def collect_gaps(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
@@ -486,6 +499,7 @@ def collect_gaps(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str,
     gaps.extend(_missing_field_gaps(slots, active, gaps))  # 양식의 묻는 칸이 빈 채로 남지 않게 묻는다
     gaps.extend(_embedded_gaps(slots, active, gaps))  # 카드 안 표: 협업 유의사항·추진 경과 확인
     gaps.extend(_empty_slot_gaps(profile, slots, active, gaps))
+    gaps.extend(_office_gaps(profile, slots, gaps))
     ordered = open_gaps(gaps)
     try:  # 장마다 따로 만든 질문 후보에서 중복을 뺀다(순서는 아래에서 양식 순서로 정한다)
         _, drops = runtime.context.engine.plan_questions(profile, ordered)
@@ -923,6 +937,8 @@ def _apply_updates(ctx: AgentContext, state: AgentState, slots: dict, result: In
     refs: list[list[str]] = []
     for update in result.updates:
         slot_key = update["slot"]
+        if SLOT_BY_KEY[slot_key].seed == "office":  # 원내 양식의 목록 이름은 정해져 있어 답변으로 바꾸지 않는다(내용만 고친다)
+            update = {**update, "title": "" if update.get("item_id") else update.get("title", ""), "fields": {k: v for k, v in (update.get("fields") or {}).items() if k != "name"}}
         slot = slots.setdefault(slot_key, {"key": slot_key, "items": [], "coverage": "missing"})
         item = upsert_item(
             slot,
@@ -1047,6 +1063,8 @@ def auto_targets(profile: dict[str, Any], slots: dict[str, Any]) -> list[dict[st
         for item in (slots.get(spec.key) or {}).get("items", []):
             fields = item.get("fields") or {}
             for key in spec.auto:
+                if (spec.field(key) or FieldSpec("", "")).placeholder:
+                    continue  # 안내만 보여 주고 인계자가 직접 적는 칸(정기업무 기타(참고자료 등))은 지어 채우지 않는다
                 meta = (item.get("field_meta") or {}).get(key) or {}
                 refresh = spec.key == "overview" and key == "note" and meta.get("rank") != RANK_USER
                 if (str(fields.get(key) or "").strip() and not refresh) or (spec.embed_into and key != "note"):
