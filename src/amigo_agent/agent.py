@@ -147,6 +147,8 @@ class HandoverAgent:
             slot = (values.get("slots") or {}).get(target.get("slot", "")) or {}
             item = next((it for it in slot.get("items", []) if it.get("id") == target.get("item_id")), None)
             overwrite = [k for k, meta in ((item or {}).get("field_meta") or {}).items() if meta.get("rank") == RANK_USER and str(((item or {}).get("fields") or {}).get(k, "")).strip()]
+            if target.get("first"):  # 예/아니요·주기 선택으로 시작한 질문은 처음 질문부터 다시 묻는다
+                target.update(target.pop("first"))
             target.update(status="open", reopened=answered_before, reopen_fields=overwrite if answered_before else [])  # 새 답은 인계자가 앞서 적은 칸을 고치는 답으로 처리한다
             target["rank"] = min((g.get("rank", 10_000) for g in gaps), default=10_000) - 1  # open_gaps 의 맨 앞으로
             self.graph.update_state(

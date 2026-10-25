@@ -8,7 +8,7 @@ from .field_guides import guide_for
 from .links import link_names_block
 from .dept_info import clean_dept_info, has_info, numbered, targets as dept_targets
 from .state import Gap, SlotState, Turn
-from .template import COVERAGE_LABELS, MODE_LABELS, SLOT_BY_KEY, SLOTS, SlotSpec, leave_period, mode_of
+from .template import ASK_AUTO, ASK_AUX, ASK_HIDDEN, COVERAGE_LABELS, MODE_LABELS, SLOT_BY_KEY, SLOTS, SlotSpec, leave_period, mode_of, profile_units
 
 ANALYSIS_SYSTEM = """\
 당신은 공공·금융기관의 업무 인수인계서 작성을 돕는 분석가입니다. 인계자가 올린 업무 자료(문서·메일·링크)를 근거로 인수인계서의 한 장(章)을 채웁니다.
@@ -21,28 +21,31 @@ ANALYSIS_SYSTEM = """\
 - 자료에 이름만 나오고 세부 내용이 없는 대상(시스템, 과제, 부서, 업체, 담당자)은 search_documents 로 추가 검색해 연결 관계를 확인합니다. 검색은 필요할 때만 하고 최대 3번까지 합니다.
 - 필드 값은 짧고 구체적으로 한 줄로 씁니다. 자료에 없으면 빈 문자열로 둡니다.
 - 필드 값(인수인계서에 들어가는 내용)의 문체는 개괄식 명사형 종결입니다: '~함.', '~임.', '~예정.', '~중.'(예: '매월 5영업일 이내 실적 검수 후 재무팀에 지급 요청함.', '정상 운영 중임.'). '~합니다·~입니다·~해요' 같은 존댓말 문장으로 쓰지 않습니다. 작성 예시의 말투가 존댓말이어도 형식만 따르고 문체는 개괄식으로 씁니다.
-- 'references'(참고자료) 필드에는 그 업무를 처리할 때 봐야 하는 매뉴얼·규정·계약서·양식·관련 법령의 이름을 근거 자료에서 찾아 적습니다. 자료에 적힌 문서명 그대로(예: '운영매뉴얼 v3.2', '계약서 별첨 SLA 표')에 위치(파일명·쪽·시트)가 있으면 함께 쓰고, 여럿이면 '; '로 구분합니다. 자료에 그런 문서가 언급되지 않았으면 짐작해서 쓰지 말고 빈 문자열로 둡니다.
+- 정기업무의 'references'(기타(참고자료 등)) 필드에는 그 업무를 처리할 때 봐야 하는 매뉴얼·규정·계약서·양식·관련 법령의 이름을 근거 자료에서 찾아 적습니다. 자료에 적힌 문서명 그대로(예: '운영매뉴얼 v3.2', '계약서 별첨 SLA 표')에 위치(파일명·쪽·시트)가 있으면 함께 쓰고, 여럿이면 '; '로 구분합니다. 자료에 그런 문서가 언급되지 않았으면 짐작해서 쓰지 말고 빈 문자열로 둡니다.
 - '주요 결정사항', '후임자에게 바라는 것', '소개 및 배경', '목표', '수행 절차' 같은 서술형 필드는 자료에 그 내용이 직접 적혀 있을 때만 씁니다. 누가 무엇을 하기로 정했다는 말, 협의·합의했다는 말, 후임자에게 당부한다는 말, 배경·목표·절차는 자료에 있는 문장만 옮기고, 그럴듯하게 짐작해서 만들지 않습니다. 자료에 없으면 빈 문자열로 두고 gaps 로 남깁니다. 비워 두는 것이 지어내는 것보다 낫습니다.
 - 진행 상태(요청했다, 협의했다, 완료했다, 확정됐다)는 자료의 표현 그대로 옮깁니다. 예정·초안·진행 중을 완료로 바꾸지 않습니다.
 - 자료에 있는 숫자·날짜·기한·비중·금액·건수·이름·연락처는 해당 필드에 빠짐없이 그대로 옮깁니다. 표에 값이 있는데 비워 두지 않습니다.
 - coverage: sufficient(인수자가 바로 업무를 이어받을 만큼 필수 정보가 갖춰짐), partial(일부 항목·필수 필드가 비어 있음), missing(관련 근거가 거의 없음).
 - summary: 이 장에서 파악한 내용을 1~2문장으로 요약합니다.
-- gaps: 인계자에게 물어볼 질문입니다. 인수인계서 양식(이 장의 필드)에서 자료로 채우지 못해 비어 있는 칸만 묻습니다. 양식에 없는 내용, 이미 값이 있는 칸, 일정·현황 등 칸과 무관한 궁금증은 묻지 않습니다.
-  · 질문마다 related_item_title 에 그 항목 제목을, field 에 비어 있는 필드 키를 정확히 씁니다. 한 질문은 한 칸만 묻습니다.
-  · 이 장에 항목이 하나도 없을 때만 related_item_title 과 field 를 빈 문자열로 두고, 이 장에 들어갈 항목을 알려 달라고 묻습니다.
+- gaps: 인계자에게 물어볼 질문입니다. 인수인계서 양식(이 장의 필드)에서 자료로 채우지 못한 칸이나 칸 안의 빠진 세부사항만 묻습니다. 양식에 없는 내용, 이미 채운 칸, 칸과 무관한 궁금증은 묻지 않습니다.
+  · 질문마다 related_item_title 에 그 항목 제목을, field 에 필드 키를 정확히 씁니다. 한 질문은 한 칸, 한 가지 세부사항(암묵지 하나)만 묻습니다.
+  · 1질문 1암묵지: 암묵지의 단위는 필드가 아니라 필드에 들어갈 세부사항(작성 기준의 '세부사항(정보 추출 기준)': 무엇을·왜·기한·판단 근거 등)입니다. 칸에 일부만 채웠으면 빠진 세부사항마다 질문을 하나씩 만들고 element 에 그 세부사항 이름을 목록의 글자 그대로 씁니다. '(보조)'가 붙은 세부사항은 보조질문(건너뛰어도 되는 질문)으로 묻게 되므로, 꼭 필요한 것만 만듭니다. 이때 '구체적 질문 예시'를 본떠, 자료에서 확인한 내용을 짧게 언급한 뒤 그 세부사항만 묻습니다.
+  · 칸이 통째로 비었으면(element 빈 문자열) 질문을 만들지 않아도 됩니다. 코드가 노션 양식의 질문 예시 문장 그대로 묻습니다. 다만 '자료에서 구체적인 사례를 찾으면 바로 묻는 칸'(필드 설명에 표시)은 자료에서 찾은 사례(문제·위험·결정·주의사항)를 들어 구체적 질문 예시처럼 묻습니다. 사례를 찾지 못했으면 그 칸의 질문은 만들지 않습니다(코드가 예/아니요로 먼저 묻습니다).
+  · '묻지 않음'으로 표시된 필드(미질의·내부 값)와 '질의응답으로만 채움' 필드는 질문하지 않습니다.
   · 근거 자료에 이미 답이 있는 내용은 묻지 않습니다.
-  · 인계자가 파일을 찾지 않고 기억·경험으로 바로 답할 수 있게 묻습니다.
-  · 자료에서 확인한 맥락을 짧게 언급해 무엇을 묻는지 바로 알 수 있게 쓰고, 한 문장으로 끝냅니다.
-  · 계약서·매뉴얼처럼 파일로 받는 편이 나은 정보면 ask_for_document 를 true 로 하되, question 은 파일이 없어도 답할 수 있게 핵심 내용을 묻습니다(예: '계약 기간과 월 금액이 어떻게 되나요?').
+  · 인계자가 파일을 찾지 않고 기억·경험으로 바로 답할 수 있게 묻고, 한 문장(길어야 두 문장)으로 끝냅니다.
+  · 계약서·매뉴얼처럼 파일로 받는 편이 나은 정보면 ask_for_document 를 true 로 하되, question 은 파일이 없어도 답할 수 있게 핵심 내용을 묻습니다.
 - 업무 히스토리(주요 결정사항·협의사항)는 '무엇을 왜 그렇게 결정했는지'와 근거(메일·메신저·회의록)가 드러나게 씁니다. 자료에 없으면 칸을 비워 둡니다(빈 칸은 gaps 로 묻습니다).
 - 질문은 인계자가 당시 상황을 떠올릴 수 있게 구체적인 업무·시점·상대를 들어 묻습니다(예: '차액 정산 방식을 지금처럼 정하기까지 어떤 논의가 있었나요?').
 - 시스템 ID·비밀번호·토큰 같은 민감 정보는 기록하지 않고 질문하지도 않습니다. 시스템 이름과 권한 신청 방법만 다룹니다.
-- 필드마다 '작성 기준'(작성 가이드·작성 예시·질문 예시·질문 조건)이 주어지면 다음처럼 씁니다.
-  · 작성 가이드는 그 칸을 자료로 채울 수 있는지 판단하는 기준입니다(암묵지 판단). 가이드의 핵심 요소를 자료로 확인할 수 없으면(예: 의사결정에 판단 근거가 없음, 절차에 단계가 없음) 짐작해서 채우지 말고 그 칸을 비워 둡니다. 비어 있는 칸만 질문합니다.
-  · gaps 의 description 에는 그 칸이 왜 비었는지(예: '결정 내용은 있으나 판단 근거 없음')를 씁니다.
-  · 질문은 질문 예시의 말투와 범위를 본뜨되, 자료에서 확인한 내용을 먼저 짧게 언급하고 그 칸에 필요한 것만 묻습니다. 질문 예시를 그대로 복사하지 않습니다.
-  · 질문 조건을 따릅니다(예: '대부분 자료를 기반으로 작성'이면 자료에 없을 때만 묻고, '건너뛰어도 되는 질문'이면 중요도를 낮춥니다).
+- 필드마다 '작성 기준'(세부사항·작성 가이드·작성 예시·질문 예시·구체적 질문 예시·질문 조건)이 주어지면 다음처럼 씁니다.
+  · 세부사항과 작성 가이드는 그 칸을 자료로 채울 수 있는지 판단하는 기준입니다(암묵지 판단). 핵심 세부사항을 자료로 확인할 수 없으면 짐작해서 채우지 말고, 확인한 세부사항만 씁니다.
+  · gaps 의 description 에는 무엇이 빠졌는지(예: '결정 내용은 있으나 판단 근거 없음')를 씁니다.
+  · 질문 조건을 따릅니다.
   · 필드 값은 작성 예시의 형식(단계 번호, 화살표, 시기순 등)을 따르되, 내용은 자료에 있는 것만 씁니다. 작성 예시의 내용을 옮겨 쓰지 않습니다.
+- 인계자 정보에 '인계자가 입력한 세부업무(단위업무)' 목록이 있으면 이 장의 항목은 그 목록의 업무만 만들고, 제목·이름 필드에는 목록의 이름을 글자 그대로 씁니다(자료에 다른 이름으로 나와도 같은 업무면 목록의 이름). 목록에 없는 업무는 항목으로 만들지 않습니다.
+- 협업 대상 표의 scope(구분)에는 우리 기관 소속 부서·사람이면 '내부', 다른 기관·업체·외부 사람이면 '외부'를 씁니다.
+- 추진 경과 표(milestones)는 시기순으로 단계마다 한 행을 만들고, status 에 인계 시점 기준 '완료'(끝난 일)·'진행'(지금 하는 일)·'계획'(앞으로 할 일) 중 하나를 씁니다.
 - 질문(gaps 의 question)과 summary 는 한국어 존댓말로 씁니다. 필드 값만 개괄식입니다.
 
 """
@@ -58,6 +61,8 @@ INTERPRET_SYSTEM = """\
 - updates: 기존 항목을 고치면 그 item_id 를 쓰고, 새 항목이면 item_id 를 빈 문자열로 둡니다. fields 에는 해당 장의 필드 키만 씁니다. 검색 결과를 근거로 썼으면 evidence_ids 에 E 번호를 적습니다.
 - resolved_gap_ids: 이번 답변으로 해소된 질문 ID(현재 질문 외에 함께 해소된 것도 포함).
 - 현재 질문에 '묻는 칸'이 있으면 답변을 그 칸(필드)에 정리합니다. '현재 질문의 작성 기준'이 주어지면 작성 예시의 형식을 따르되 내용은 인계자의 말만 씁니다.
+- '묻는 세부사항'이 있으면 그 칸에는 이미 값이 있습니다. 답이 빠진 내용을 보태는 것이면 기존 값을 지우지 말고 기존 값 뒤에 답변 내용을 이어 붙인 칸 전체 값을 updates 에 씁니다. 답이 기존 값을 확인·정정하는 것(예: 절차 순서가 맞는지 물었는데 순서를 고쳐 말함)이면 같은 내용을 두 번 쓰지 말고 고친 내용으로 칸 전체를 다시 씁니다.
+- '상위 항목'이 주어지면(협업 유의사항·추진 경과 질문) 답변을 그 표의 행으로 정리하고, 연결 필드(task/project)에 상위 항목 이름을 글자 그대로 씁니다. 이미 있는 행(같은 사람·같은 단계)이면 그 item_id 를 씁니다.
 - reply: 인계자에게 보낼 메시지(존댓말, 4문장 이내).
   · answer/correct 이고 updates 가 있으면 정리한 내용을 항목별로 짧게 요약하고 "맞으면 '네', 고칠 부분이 있으면 말씀해 주세요."로 끝냅니다(교차 확인).
   · 정리한 뒤 더 알려 달라거나 덧붙여 달라는 요청(추가 질문)을 하지 않습니다. 빈 칸은 코드가 따로 묻습니다.
@@ -79,14 +84,25 @@ SUMMARY_SYSTEM = """\
 """
 
 
-UNIT_SUMMARY_SYSTEM = """\
-당신은 업무 인수인계서를 마무리합니다. '업무 단위 요약 + 일정 명세표'의 진행상황 요약 칸을 채웁니다.
-- 단위업무마다 지금 어디까지 진행되었는지를 1~2문장, 개괄식 명사형 종결('~함.', '~임.', '~예정.')로 짧게 씁니다(예: '정상 운영 중임. 11월 인증 갱신 신청 예정.'). '~합니다' 같은 존댓말로 쓰지 않습니다.
+AUTO_FILL_SYSTEM = """\
+당신은 업무 인수인계서를 마무리합니다. 인계자에게 묻지 않는 칸(미질의 항목: 업무 개요·프로젝트 개요·계획기간·진행상황 요약 등)을 지금까지 수집된 내용으로 채웁니다.
+- 칸마다 그 칸의 이름과 작성 기준에 맞게 1~3문장, 개괄식 명사형 종결('~함.', '~임.', '~예정.')로 짧게 씁니다. '~합니다' 같은 존댓말로 쓰지 않습니다.
 - 주어진 '수집된 항목'(자료 분석 결과와 인계자 답변이 반영된 값)에 있는 내용만 씁니다. 새 사실·날짜·숫자를 만들지 않습니다.
-- 단위업무와 관련된 정기업무·비정기 업무 항목(이름이 같거나 그 단위업무에 속하는 세부 업무)의 진행 상태·일정·추진 경과를 모아 요약합니다.
-- 수집된 내용으로 진행상황을 알 수 없으면 summary 를 빈 문자열로 둡니다.
-- summaries 에는 주어진 단위업무 id 를 그대로 씁니다.
+- 업무 단위 요약의 진행상황 요약은 그 단위업무에 속한 정기업무·비정기 업무 항목의 진행 상태·일정·추진 경과를 모아 요약합니다.
+- 계획기간은 '2026.03~2026.12' 또는 '상시(매월)'처럼 월을 읽을 수 있게 씁니다. 수집된 일정으로 알 수 없으면 빈 문자열로 둡니다.
+- 수집된 내용으로 알 수 없으면 value 를 빈 문자열로 둡니다.
+- values 에는 주어진 target_id 를 그대로 씁니다.
 """
+
+
+def units_text(profile: dict[str, Any]) -> str:
+    """인계자가 고른 단위업무와 단위업무별로 입력한 정기/비정기 세부업무(프롬프트용 한 줄씩)."""
+    lines = []
+    for unit in profile_units(profile):
+        parts = [f"정기: {', '.join(unit['regular'])}" if unit["regular"] else "", f"비정기: {', '.join(unit['irregular'])}" if unit["irregular"] else ""]
+        detail = " / ".join(p for p in parts if p) or "세부업무 입력 없음"
+        lines.append(f"\n  · {unit['name'] + ' — ' if unit['name'] else ''}{detail}")
+    return "".join(lines)
 
 
 def profile_block(profile: dict[str, Any]) -> str:
@@ -96,6 +112,7 @@ def profile_block(profile: dict[str, Any]) -> str:
         ("소속", profile.get("organization")),
         ("인계 유형", MODE_LABELS[mode_of(profile)]),
         ("담당 업무(인계자 입력)", profile.get("duties")),
+        ("인계자가 입력한 세부업무(단위업무)", units_text(profile)),
         ("인수자", profile.get("successor")),
         ("휴가 기간", leave_period(profile)),
         ("인계 예정일", profile.get("handover_date")),
@@ -257,24 +274,36 @@ def guide_lines(spec: SlotSpec, key: str, indent: str = "  · ") -> str:
     return "".join(f"\n{indent}{line}" for line in guide.lines()) if guide else ""
 
 
+def ask_note(spec: SlotSpec, key: str) -> str:
+    """필드를 묻는 방식(분석 프롬프트용 표시)."""
+    f = spec.field(key)
+    if f is None:
+        return ""
+    if f.answers_only:
+        return " [질의응답으로만 채움: 자료에서 채우지 않고 질문하지 않음]"
+    if f.ask == ASK_HIDDEN:
+        return " [내부 값: 문서에 싣지 않음, 묻지 않음]"
+    if f.ask == ASK_AUTO:
+        return " [묻지 않음(미질의): 자료에 있으면 채우고, 없으면 비워 둠]"
+    notes = ["보조질문" if f.ask == ASK_AUX else "필수 질문"]
+    if f.specific:
+        notes.append("자료에서 구체적인 사례를 찾으면 그 사례를 들어 바로 묻는 칸")
+    return f" [{', '.join(notes)}]"
+
+
 def slot_spec_block(spec: SlotSpec) -> str:
-    """장의 필드 정의. 필드마다 핵심 질문(hint)과 노션 양식의 작성 기준(field_guides)을 함께 준다."""
-    fields = "\n".join(f"- {f.key}({f.label}){': ' + f.hint if f.hint else ''}{guide_lines(spec, f.key)}" for f in spec.fields)
+    """장의 필드 정의. 필드마다 핵심 질문(hint), 묻는 방식, 노션 양식의 작성 기준(field_guides)을 함께 준다."""
+    fields = "\n".join(f"- {f.key}({f.label}){': ' + f.hint if f.hint else ''}{ask_note(spec, f.key)}{guide_lines(spec, f.key)}" for f in spec.fields)
     whole = guide_lines(spec, "*", indent="- ")
     if whole:
         fields += f"\n\n이 장 전체의 작성 기준:{whole}"
     conditional = "".join(
-        f"\n조건부 필수: {key}({spec.label(key)}) 는 {when}({spec.label(when)}) 에 '{'·'.join(values)}' 이(가) 들어갈 때만 필수입니다(그 밖에는 비워 두고 묻지 않습니다)."
-        for key, when, values in spec.required_when
+        f"\n조건부: {key}({spec.label(key)}) 는 {when}({spec.label(when)}) 에 '{'·'.join(values)}' 이(가) 들어갈 때 {'필수 질문' if ask == 'main' else '보조질문'}입니다."
+        for key, when, values, ask in spec.ask_when
     )
-    conditional += "".join(
-        f"\n자동 작성: {key}({spec.label(key)}) 는 문서를 만들 때 수집된 내용으로 채웁니다. 자료에 그대로 있으면 옮기되 비어 있어도 되고, 이 필드는 gaps 로 묻지 않습니다."
-        for key in spec.auto
-    )
-    return (
-        f"## 작성할 장: {spec.title}\n{spec.description}\n\n필드:\n{fields}\n"
-        f"필수 필드: {', '.join(spec.required)} / 최소 항목 수: {spec.min_items}{conditional}"
-    )
+    if spec.embed_into:
+        conditional += f"\n이 장은 '{SLOT_BY_KEY[spec.embed_into].title}' 카드 안의 표입니다. 표의 칸은 자료로만 채우고 이 장의 gaps 는 만들지 않습니다(필요한 질문은 코드가 카드마다 만듭니다)."
+    return f"## 작성할 장: {spec.title}\n{spec.description}\n\n필드:\n{fields}\n최소 항목 수: {spec.min_items}{conditional}"
 
 
 def analysis_user(spec: SlotSpec, profile: dict[str, Any], evidence_text: str) -> str:
@@ -325,6 +354,19 @@ def gaps_block(gaps: list[Gap]) -> str:
     return "\n".join(f"- {g['id']} [{SLOT_BY_KEY[g['slot']].title}] {g.get('description', '')}" for g in gaps)
 
 
+def parent_line(gap: Gap, slots: dict[str, SlotState]) -> str:
+    """카드 안 표의 질문이면 그 표가 들어가는 카드(정기업무·프로젝트)의 이름."""
+    spec = SLOT_BY_KEY[gap["slot"]]
+    if not spec.embed_into or not gap.get("parent_id"):
+        return ""
+    parent = SLOT_BY_KEY[spec.embed_into]
+    item = next((it for it in (slots.get(spec.embed_into) or {}).get("items", []) if it.get("id") == gap["parent_id"]), None)
+    if item is None:
+        return ""
+    name = (item.get("fields") or {}).get(parent.title_field) or item.get("title", "")
+    return f"\n- 상위 항목: {parent.title} '{name}' (이 표 [{spec.key}] 의 행으로 정리하고 {spec.embed_link} 에 '{name}' 을 씁니다)"
+
+
 def interpret_user(
     *,
     profile: dict[str, Any],
@@ -341,6 +383,8 @@ def interpret_user(
             f"- id: {current_gap['id']}\n- 장: {SLOT_BY_KEY[current_gap['slot']].title} [{current_gap['slot']}]\n"
             f"- 관련 항목 id: {current_gap.get('item_id') or '(없음)'}\n- 질문: {current_gap.get('question', '')}"
             + (f"\n- 묻는 칸: {current_gap['field']}({SLOT_BY_KEY[current_gap['slot']].label(current_gap['field'])})" if current_gap.get("field") else "")
+            + (f"\n- 묻는 세부사항: {current_gap['element']} (기존 값 뒤에 이어 붙입니다)" if current_gap.get("element") else "")
+            + parent_line(current_gap, slots)
         )
         spec = SLOT_BY_KEY[current_gap["slot"]]
         criteria = "\n".join(f"- {f.label}{guide_lines(spec, f.key)}" for f in spec.fields if guide_for(spec.key, f.key))
@@ -371,15 +415,16 @@ def plan_user(profile: dict[str, Any], gaps: list[Gap]) -> str:
     return f"## 인계자 정보\n{profile_block(profile)}\n\n{dept_section}## 질문 후보\n" + "\n".join(lines)
 
 
-def unit_summary_user(profile: dict[str, Any], slots: dict[str, SlotState]) -> str:
-    units = []
-    for item in (slots.get("overview") or {}).get("items", []):
-        fields = item.get("fields") or {}
-        units.append(f"- id={item.get('id')} | {fields.get('name') or item.get('title')} | 계획기간: {fields.get('period') or '-'} | 자료의 진행상황: {fields.get('note') or '-'}")
-    others = [key for key in slots if key != "overview"]
+def auto_fill_user(profile: dict[str, Any], slots: dict[str, SlotState], targets: list[dict[str, Any]]) -> str:
+    lines = []
+    for i, t in enumerate(targets):
+        spec = SLOT_BY_KEY[t["slot"]]
+        guide = guide_lines(spec, t["field"], indent="  · ")
+        current = f" | 자료에서 읽은 값: {t['current']}" if t.get("current") else ""
+        lines.append(f"- target_id=t{i} | {spec.title} > {t['title']} > {t['label']}{current}{guide}")
     return (
-        f"## 인계자 정보\n{profile_block(profile)}\n\n## 단위업무\n" + "\n".join(units)
-        + f"\n\n## 수집된 항목\n{items_block(slots, others)}\n\n각 단위업무의 진행상황 요약을 작성하세요."
+        f"## 인계자 정보\n{profile_block(profile)}\n\n## 채울 칸\n" + "\n".join(lines)
+        + f"\n\n## 수집된 항목\n{items_block(slots)}\n\n각 칸의 값을 작성하세요."
     )
 
 

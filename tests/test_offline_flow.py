@@ -9,47 +9,69 @@ def kinds(result):
     return [m["kind"] for m in result.messages]
 
 
-def test_full_flow_stage_1_to_4(kb_ordered):
-    kb = kb_ordered
+UNITS = {
+    **PROFILE,
+    "units": [
+        {"name": "홈페이지 콘텐츠 관리", "regular": ["유지보수 월간 실적 검수", "보도자료 게시"], "irregular": ["홈페이지 리뉴얼"]},
+        {"name": "유지보수 계약 관리", "regular": [], "irregular": []},
+    ],
+}
+
+
+def current(snap):
+    return next(g for g in snap["gaps"] if g["id"] == snap["current_gap_id"])
+
+
+def test_full_flow_stage_1_to_4(kb):
     agent = HandoverAgent()
     seen = []
-    result = agent.start("s1", PROFILE, kb, on_event=seen.append)
+    result = agent.start("s1", UNITS, kb, on_event=seen.append)
 
     stages = [e["stage"] for e in seen if e["type"] == "stage"]
     assert stages[:2] == ["analyzing", "summary"]
-    assert {e["key"] for e in seen if e["type"] == "slot"} == {"overview", "regular", "partners", "irregular", "stakeholders", "systems", "dept_notes"}
+    assert {e["key"] for e in seen if e["type"] == "slot"} == {"overview", "regular", "partners", "irregular", "milestones", "stakeholders", "systems", "dept_notes"}
     assert kinds(result) == ["summary", "question"]
     snap = result.snapshot
     assert snap["waiting"] and snap["stage"] == "qna" and snap["question_count"] == 1
-    assert snap["slots"]["overview"]["coverage"] == "sufficient"
-    assert any(c["label"] == "업무정의서.pdf p.1" for it in snap["slots"]["overview"]["items"] for c in it["citations"])
+    # 항목은 인계자가 고른 단위업무·입력한 세부업무만(자료의 다른 이름은 입력한 이름으로 맞춘다)
+    assert [it["title"] for it in snap["slots"]["overview"]["items"]] == ["홈페이지 콘텐츠 관리", "유지보수 계약 관리"]
+    assert [it["title"] for it in snap["slots"]["regular"]["items"]] == ["유지보수 월간 실적 검수", "보도자료 게시"]
+    assert [it["title"] for it in snap["slots"]["irregular"]["items"]] == ["홈페이지 리뉴얼"]
+    assert not [g for g in snap["gaps"] if g["slot"] == "overview"]  # 업무 단위 요약은 묻지 않는다
 
-    # 한 번에 하나의 질문: 질문 메시지에는 슬롯 하나와 gap_id 하나만 있다. 첫 질문은 협업관계의 '프로젝트명'
+    # 첫 질문: 첫 세부업무의 중점 관리사항(자료에 없으면 예/아니요로 먼저 묻는다)
     question = result.messages[-1]
-    assert question["meta"]["gap_id"] == snap["current_gap_id"] and question["meta"]["slot"] == "stakeholders"
+    assert question["meta"]["gap_id"] == snap["current_gap_id"] and question["meta"]["slot"] == "regular"
+    assert question["meta"]["quick_replies"] == ["예", "아니요"] and question["meta"]["choice"] == "yesno"
+    assert current(snap)["field"] == "key_points"
+
+    # 아니요 → '해당 없음'으로 기록하고 다음 질문(의사결정, 예/아니요)
+    result = agent.send_message("s1", "아니요", kb)
+    assert kinds(result) == ["question"] and result.messages[0]["content"].startswith("'중점 관리사항'은(는) '해당 없음'으로 기록했어요.")
+    item = result.snapshot["slots"]["regular"]["items"][0]
+    assert item["fields"]["key_points"] == "해당 없음"
+    assert current(result.snapshot)["field"] == "decisions"
+
+    # 예 → 같은 질문 자리에서 노션 질문 예시로 이어서 묻는다(주관식)
+    result = agent.send_message("s1", "예", kb)
+    assert kinds(result) == ["question"] and "어떤 이유와 기준으로 결정했나요?" in result.messages[0]["content"]
+    assert result.messages[0]["meta"]["quick_replies"] == ["모르겠어요 (건너뛰기)", "지금 문서 생성"]
+    assert result.messages[0]["meta"]["gap_id"] == question["meta"]["gap_id"] or current(result.snapshot)["field"] == "decisions"
 
     # 답변 → 교차 확인 메시지 + 확인 대기
-    result = agent.send_message("s1", "CD공동망 고도화 프로젝트에서 협의했습니다", kb)
-    assert kinds(result) == ["confirm"]
-    assert "CD공동망 고도화" in result.messages[0]["content"]
-    assert result.snapshot["pending"]["refs"]
-    assert kb.added and "CD공동망 고도화" in kb.added[-1]  # 답변이 지식베이스에도 반영된다
+    result = agent.send_message("s1", "SLA 1시간 기준을 계약에 넣기로 결정했어요", kb)
+    assert kinds(result) == ["confirm"] and result.snapshot["pending"]["refs"]
+    assert kb.added and "SLA 1시간" in kb.added[-1]  # 답변이 지식베이스에도 반영된다
 
-    # 확인 → 다음 질문(이전 답변을 다시 정리하는 문구 없이 질문만): 시스템 접근 권한의 신청·이관 방법
+    # 확인 → 다음 질문(협업 유의사항 또는 향후 과제)
     result = agent.send_message("s1", "네", kb)
     assert kinds(result) == ["question"]
     assert not result.messages[0]["content"].startswith(("**[", "["))  # 장 이름은 본문이 아니라 meta.slot 으로 알린다
     assert "확인했습니다" not in result.messages[0]["content"]
-    assert result.snapshot["question_count"] == 2
-    assert result.messages[0]["meta"]["slot"] == "systems"
-    agent.send_message("s1", "신청은 내선 2345 로 연락합니다", kb)
-    result = agent.send_message("s1", "네", kb)
-    assert result.snapshot["question_count"] == 3
 
     # 건너뛰기
     result = agent.skip("s1", kb)
-    skipped = [g for g in result.snapshot["gaps"] if g["status"] == "skipped"]
-    assert len(skipped) == 1
+    assert len([g for g in result.snapshot["gaps"] if g["status"] == "skipped"]) == 1
 
     # 지금 문서 생성
     result = agent.finish("s1", kb)
@@ -58,56 +80,53 @@ def test_full_flow_stage_1_to_4(kb_ordered):
     version = snap["document_version"]
     doc = snap["document"]
     assert doc.startswith("# 업무 인수인계서")
-    for heading in ("## 1. 업무 단위 요약 + 일정 명세표", "## 2. 정기업무", "## 3. 비정기 업무(프로젝트성)", "## 4. 시스템 접근 권한", "## 5. 부서별 추가 자료"):
+    for heading in ("## 1. 업무 단위 요약 + 일정 명세표", "## 2. 정기업무", "## 3. 비정기 업무(프로젝트성)", "## 4. 기타 자료"):
         assert heading in doc
-    assert "## 6." not in doc and "확인 필요 사항" not in doc and "근거 자료" not in doc  # 양식(A~E)에 없는 장은 싣지 않는다
-    assert "## 1. 업무 개요" not in doc and "비정기 업무 협업관계 및 협의사항\n" not in doc  # 개요 장도, 협업관계 별도 장도 없다
-    assert "내선 2345" in doc
-    assert any(g["status"] == "skipped" for g in snap["gaps"])  # 건너뛴 질문은 문서가 아니라 화면의 확인 필요 사항(질문 목록)에 남는다
+    assert "## 5." not in doc and "확인 필요 사항" not in doc and "근거 자료" not in doc  # 양식에 없는 장은 싣지 않는다
+    assert "SLA 1시간" in doc and "### 2) 보도자료 게시" in doc
 
     # 검토 의견 → 문서 재작성(v2)
     result = agent.send_message("s1", "Google Analytics 권한은 기존 담당자가 직접 이관해 줍니다", kb)
     assert result.snapshot["document_version"] == version + 1
 
 
-def test_correction_overwrites_last_recorded_fields(kb_ordered):
-    kb = kb_ordered
+def _to_follow_question(agent, thread, kb):
+    agent.start(thread, UNITS, kb)
+    agent.send_message(thread, "아니요", kb)  # 중점 관리사항 없음
+    agent.send_message(thread, "예", kb)  # 의사결정 있음 → 주관식
+
+
+def test_correction_overwrites_last_recorded_fields(kb):
     agent = HandoverAgent()
-    agent.start("s2", PROFILE, kb)
-    # 첫 질문은 협업관계의 '프로젝트명'
-    agent.send_message("s2", "홈페이지 리뉴얼 건입니다", kb)
-    result = agent.send_message("s2", "아니, 개인정보처리방침 개정이에요", kb)
-    assert kinds(result) == ["confirm"]
-    assert "개인정보처리방침 개정" in result.messages[0]["content"]
+    _to_follow_question(agent, "s2", kb)
+    agent.send_message("s2", "SLA 2시간 기준으로 결정", kb)
+    result = agent.send_message("s2", "아니, SLA 1시간 기준이에요", kb)
+    assert kinds(result) == ["confirm"] and "SLA 1시간" in result.messages[0]["content"]
     agent.send_message("s2", "네", kb)
-    partners = agent.snapshot("s2")["slots"]["stakeholders"]["items"]
-    finance = next(it for it in partners if it["title"].startswith("재무팀"))
-    assert "개인정보처리방침 개정" in finance["fields"]["project"] and "홈페이지 리뉴얼" not in finance["fields"]["project"]
-    assert finance["confirmed"] is True
+    item = agent.snapshot("s2")["slots"]["regular"]["items"][0]
+    assert "SLA 1시간" in item["fields"]["decisions"] and "2시간" not in item["fields"]["decisions"]
+    assert item["confirmed"] is True
 
 
-def test_repeated_corrections_stop_after_two_rounds(kb_ordered):
-    kb = kb_ordered
+def test_repeated_corrections_stop_after_two_rounds(kb):
     """정리 확인 → 고친 내용 확인 다음의 고침은 더 묻지 않고 반영한 뒤 다음 질문으로 넘어간다(무한 반복 방지)."""
     agent = HandoverAgent()
-    agent.start("s5", PROFILE, kb)
-    assert kinds(agent.send_message("s5", "홈페이지 리뉴얼 건입니다", kb)) == ["confirm"]
-    first = agent.send_message("s5", "아니요, 개인정보처리방침 개정이에요", kb)
+    _to_follow_question(agent, "s5", kb)
+    assert kinds(agent.send_message("s5", "SLA 2시간 기준으로 결정", kb)) == ["confirm"]
+    first = agent.send_message("s5", "아니요, SLA 1시간 기준이에요", kb)
     assert kinds(first) == ["confirm"]
     assert "요, " not in first.messages[0]["content"]  # '아니요' 를 통째로 떼어 낸다
-    second = agent.send_message("s5", "아니요, 웹 접근성 개선이에요", kb)
+    second = agent.send_message("s5", "아니요, SLA 30분 기준이에요", kb)
     assert kinds(second) == ["question"]
     assert second.messages[0]["content"].startswith("고쳐 주신 내용으로 반영해 둘게요.")
-    assert not second.snapshot["pending"] and second.snapshot["question_count"] == 2
-    finance = next(it for it in second.snapshot["slots"]["stakeholders"]["items"] if it["title"].startswith("재무팀"))
-    assert "웹 접근성 개선" in finance["fields"]["project"]
+    assert not second.snapshot["pending"]
+    assert "SLA 30분" in second.snapshot["slots"]["regular"]["items"][0]["fields"]["decisions"]
 
 
-def test_files_trigger_reanalysis_and_keep_user_answers(kb_ordered):
-    kb = kb_ordered
+def test_files_trigger_reanalysis_and_keep_user_answers(kb):
     agent = HandoverAgent()
-    agent.start("s3", PROFILE, kb)
-    agent.send_message("s3", "홈페이지 리뉴얼 건입니다", kb)
+    _to_follow_question(agent, "s3", kb)
+    agent.send_message("s3", "SLA 1시간 기준으로 결정", kb)
     agent.send_message("s3", "네", kb)
     kb.docs.append(
         {
@@ -117,10 +136,10 @@ def test_files_trigger_reanalysis_and_keep_user_answers(kb_ordered):
         }
     )
     result = agent.notify_files("s3", kb, ["연락망.xlsx"])
-    partners = {it["title"]: it for it in result.snapshot["slots"]["stakeholders"]["items"]}
-    assert partners["정보보호팀 최영희 주임"]["fields"]["discussed"] == "웹방화벽 정책"  # 담당자 열은 협의 상대 이름에 붙는다
-    finance = next(it for it in partners.values() if it["title"].startswith("재무팀"))
-    assert finance["fields"]["project"] == "홈페이지 리뉴얼 건입니다"  # 재분석해도 인계자 답변은 유지
+    rows = {it["fields"].get("name"): it for it in result.snapshot["slots"]["stakeholders"]["items"]}
+    assert rows["최영희 주임"]["fields"]["role"] == "웹방화벽 정책" and rows["최영희 주임"]["fields"]["org"] == "정보보호팀"
+    assert [it["title"] for it in result.snapshot["slots"]["regular"]["items"]] == ["유지보수 월간 실적 검수", "보도자료 게시"]  # 입력한 세부업무만
+    assert "SLA 1시간" in result.snapshot["slots"]["regular"]["items"][0]["fields"]["decisions"]  # 재분석해도 인계자 답변은 유지
     assert result.messages[-1]["kind"] == "question"
     assert "새 자료(연락망.xlsx)를 반영했어요" in result.messages[-1]["content"]
 
@@ -193,9 +212,8 @@ def test_file_upload_keeps_question_order(kb):
     from amigo_agent.state import open_gaps
 
     agent = HandoverAgent()
-    agent.start("s4", PROFILE, kb)
-    agent.send_message("s4", "홈페이지 리뉴얼 건입니다", kb)
-    before = agent.send_message("s4", "네", kb)
+    agent.start("s4", UNITS, kb)
+    before = agent.send_message("s4", "아니요", kb)
     asked = before.messages[-1]["content"]
     order = [g["question"] for g in open_gaps(before.snapshot["gaps"])]
     count = before.snapshot["question_count"]
@@ -210,19 +228,31 @@ def test_file_upload_keeps_question_order(kb):
     assert asked.split("\n\n")[-1] in after.messages[-1]["content"]  # 방금 물은 질문을 다시 묻는다
     assert after.snapshot["question_count"] == count  # 같은 질문이라 번호는 그대로
     remaining = [g["question"] for g in open_gaps(after.snapshot["gaps"])]
-    assert [q for q in remaining if q in order] == [q for q in order if q in remaining]  # 원래 있던 질문끼리의 순서는 그대로(새 자료로 생긴 질문은 자기 장 자리에 끼어든다)
+    assert [q for q in remaining if q in order] == [q for q in order if q in remaining]  # 원래 있던 질문끼리의 순서는 그대로
     assert all(g.get("rank") is not None for g in open_gaps(after.snapshot["gaps"]))
 
 
-def test_questions_are_asked_in_template_slot_order(kb):
-    """정보량·우선순위와 상관없이 인수인계서 양식의 장 순서(개요 → 정기 → 비정기 → 협업 → 시스템 → 부서)대로 묻는다."""
-    from amigo_agent.template import SLOT_KEYS
+def test_questions_are_asked_in_template_order_one_task_at_a_time(kb):
+    """양식 순서대로 묻는다: 장 순서(정기 → 비정기) 안에서 세부업무 하나를 다 묻고 다음 세부업무로, 세부업무 안에서는 표의 행 순서대로."""
+    from amigo_agent.template import SLOT_BY_KEY
 
     agent = HandoverAgent()
-    snap = agent.start("order", PROFILE, kb).snapshot
+    snap = agent.start("order", UNITS, kb).snapshot
     asked = []
     while snap["stage"] == "qna" and snap["waiting"]:
-        asked.append(next(g["slot"] for g in snap["gaps"] if g["id"] == snap["current_gap_id"]))
+        gap = current(snap)
+        if gap["slot"] == "dept_notes":  # 기타 자료(부서별 추가 자료)는 마지막 장
+            asked.append((2, 0, 0))
+            snap = agent.skip("order", kb).snapshot
+            continue
+        spec = SLOT_BY_KEY[gap["slot"]]
+        parent_key = spec.embed_into or spec.key
+        parent = SLOT_BY_KEY[parent_key]
+        item_id = gap.get("parent_id") or gap.get("item_id")
+        index = [it["id"] for it in snap["slots"][parent_key]["items"]].index(item_id)
+        keys = [f.key for f in parent.fields]
+        row = keys.index(spec.embed_after) + 0.5 if spec.embed_into else keys.index(gap["field"]) if gap.get("field") in keys else -1
+        asked.append(((0 if parent_key == "regular" else 1), index, row))
         snap = agent.skip("order", kb).snapshot
-    assert asked and asked == sorted(asked, key=SLOT_KEYS.index)
-    assert asked[0] == "regular" and "stakeholders" in asked and asked.index("stakeholders") < asked.index("systems") < asked.index("dept_notes")
+    assert asked and asked == sorted(asked)
+    assert {a[0] for a in asked} == {0, 1, 2} and len({(a[0], a[1]) for a in asked if a[0] < 2}) == 3  # 정기 2건, 비정기 1건, 그다음 기타 자료

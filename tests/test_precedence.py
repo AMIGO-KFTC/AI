@@ -17,7 +17,7 @@ def cite(meta: dict, label: str = "자료") -> dict:
 
 def put(slot, value, meta=None, origin="document", label="자료", citations=None):
     cites = citations if citations is not None else [cite(meta or {}, label)]
-    return upsert_item(slot, item_id="", title="재무팀", fields={"party": "재무팀", "discussed": value}, citations=cites, origin=origin)
+    return upsert_item(slot, item_id="", title="재무팀", fields={"name": "재무팀", "role": value}, citations=cites, origin=origin)
 
 
 def stakeholders():
@@ -25,7 +25,7 @@ def stakeholders():
 
 
 def discussed(slot) -> str:
-    return slot["items"][0]["fields"]["discussed"]
+    return slot["items"][0]["fields"]["role"]
 
 
 OFFICIAL = {"file_name": "업무정의서.pdf", "source_type": "pdf"}
@@ -138,8 +138,8 @@ def test_offline_pipeline_applies_precedence_between_documents():
     agent = HandoverAgent()
     agent.start("p1", PROFILE, kb)
     items = agent.snapshot("p1")["slots"]["stakeholders"]["items"]
-    team = next(it for it in items if it["title"] == "정보보호팀 최영희 주임")
-    assert team["fields"]["discussed"] == "내선 2222"
+    team = next(it for it in items if it["title"] == "최영희 주임")
+    assert team["fields"]["role"] == "내선 2222" and team["fields"]["org"] == "정보보호팀"
     assert team["conflicts"] and team["conflicts"][0]["dropped"] == "내선 1111"
     doc = agent.finish("p1", kb).snapshot["document"]
     assert "내선 1111" not in doc  # 문서에는 적용한 값만 쓴다
@@ -147,20 +147,20 @@ def test_offline_pipeline_applies_precedence_between_documents():
 
 
 def test_user_answer_survives_reanalysis_with_newer_document():
-    talk_table = "| 부서 | 담당자 | 프로젝트 | 협업 내용 |\n|---|---|---|---|\n| 정보보호팀 | 최영희 주임 | 홈페이지 리뉴얼 | {talk} |"
-    kb = FakeKB(docs=[{"file_name": "연락망.xlsx", "source_type": "xlsx", "created_at": "2026-09-01", "text": talk_table.format(talk="-")}])  # 처음 자료에는 협의 내용이 비어 있다
+    card = "| 세부업무명 | 수행시기 | 수행절차 | 주요의사결정 |\n|---|---|---|---|\n| 월간 보고 | 매월 5일 | 취합 후 보고 | {decision} |"
+    kb = FakeKB(docs=[{"file_name": "업무카드.xlsx", "source_type": "xlsx", "created_at": "2026-09-01", "text": card.format(decision="-")}])  # 처음 자료에는 의사결정이 비어 있다
+    profile = {**PROFILE, "units": [{"name": "경영 보고", "regular": ["월간 보고"], "irregular": []}]}
     agent = HandoverAgent()
-    start = agent.start("p2", PROFILE, kb)
-    snap = start.snapshot
-    while next(g for g in snap["gaps"] if g["id"] == snap["current_gap_id"])["slot"] != "stakeholders":
-        snap = agent.skip("p2", kb).snapshot  # 같은 우선순위에서는 더 많은 정보를 채우는 질문(시스템 권한)을 먼저 묻는다
-    assert next(g for g in snap["gaps"] if g["id"] == snap["current_gap_id"])["slot"] == "stakeholders"  # 협의 표의 '협의한 내용'이 빈 항목도 묻는다
-    agent.send_message("p2", "웹방화벽 정책 변경을 협의했습니다", kb)
+    snap = agent.start("p2", profile, kb).snapshot
+    while next(g for g in snap["gaps"] if g["id"] == snap["current_gap_id"])["field"] != "decisions":
+        snap = agent.skip("p2", kb).snapshot
+    agent.send_message("p2", "예", kb)  # 결정한 사항이 있다 → 주관식
+    agent.send_message("p2", "공통 양식으로 통일하기로 했습니다", kb)
     agent.send_message("p2", "네", kb)
-    kb.docs.append({"chunk_id": "n1", "text": talk_table.format(talk="보안 점검 일정 협의"), "metadata": {"source_id": "n1", "file_name": "연락망_최신.xlsx", "source_type": "xlsx", "created_at": "2099-01-01"}})
-    result = agent.notify_files("p2", kb, ["연락망_최신.xlsx"])
-    team = next(it for it in result.snapshot["slots"]["stakeholders"]["items"] if it["title"] == "정보보호팀 최영희 주임")
-    assert "웹방화벽 정책 변경" in team["fields"]["discussed"]  # 훨씬 최신 공식 문서가 와도 인계자 답변이 우선
+    kb.docs.append({"chunk_id": "n1", "text": card.format(decision="부서별 양식 유지"), "metadata": {"source_id": "n1", "file_name": "업무카드_최신.xlsx", "source_type": "xlsx", "created_at": "2099-01-01"}})
+    result = agent.notify_files("p2", kb, ["업무카드_최신.xlsx"])
+    task = result.snapshot["slots"]["regular"]["items"][0]
+    assert "공통 양식으로 통일" in task["fields"]["decisions"]  # 훨씬 최신 공식 문서가 와도 인계자 답변이 우선
 
 
 def test_render_shows_only_applied_value_without_conflict_list():
@@ -179,7 +179,7 @@ def test_render_shows_only_applied_value_without_conflict_list():
 
 # ---------------------------------------------------------------- resolve_conflicts 노드(후보 모으기 → 확정)
 def _deferred(slot, value, meta, label):
-    return upsert_item(slot, item_id="", title="재무팀", fields={"party": "재무팀", "discussed": value}, citations=[cite(meta, label)], origin="document", defer=True)
+    return upsert_item(slot, item_id="", title="재무팀", fields={"name": "재무팀", "role": value}, citations=[cite(meta, label)], origin="document", defer=True)
 
 
 def test_deferred_candidates_are_resolved_later_with_same_result_as_immediate():
@@ -196,11 +196,11 @@ def test_deferred_candidates_are_resolved_later_with_same_result_as_immediate():
         put(immediate, value, meta, label=label)
         _deferred(deferred, value, meta, label)
     assert "candidates" in deferred["items"][0]  # 확정 전에는 후보만 모여 있다
-    assert len(deferred["items"][0]["candidates"]["discussed"]) == 4
+    assert len(deferred["items"][0]["candidates"]["role"]) == 4
     assert resolve_slots({"stakeholders": deferred}) == ["stakeholders"]
     item = deferred["items"][0]
     assert "candidates" not in item
-    assert item["fields"]["discussed"] == discussed(immediate) == "내선 2222"
+    assert item["fields"]["role"] == discussed(immediate) == "내선 2222"
     assert [(c["applied"], c["dropped"]) for c in item["conflicts"]] == [(c["applied"], c["dropped"]) for c in immediate["items"][0]["conflicts"]]
     assert resolve_slots({"stakeholders": deferred}) == []  # 이미 확정한 뒤에는 할 일이 없다
 

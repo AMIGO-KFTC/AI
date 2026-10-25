@@ -45,20 +45,25 @@ HEADER_SYNONYMS: dict[str, dict[str, tuple[str, ...]]] = {
         "name": ("세부업무명", "업무명", "업무", "작업"),
     },
     "irregular": {
-        "overview": ("프로젝트개요", "추진배경", "개요", "배경"),
-        "goals": ("목표", "기대성과", "목적"),
-        "progress": ("추진경과", "진행경과", "진행현황", "현황", "경과", "진행상황", "상태", "진척"),
+        "overview": ("프로젝트개요", "추진배경", "개요", "배경", "진행현황", "현황"),
         "decisions": ("의사결정", "판단근거", "주요결정", "결정사항"),
         "key_points": ("중점관리사항", "중요사항", "유의사항"),
-        "future": ("향후추진과제", "향후과제", "발전방향", "다음할일", "향후계획", "미결과제", "미결", "할일"),
         "name": ("프로젝트명", "세부업무명", "과제명", "과제", "프로젝트", "사업명"),
+    },
+    "milestones": {
+        "project": ("관련프로젝트", "프로젝트명", "프로젝트", "과제"),
+        "when": ("시기", "일정", "기간", "일자"),
+        "note": ("비고",),
+        "status": ("상태", "구분"),
+        "content": ("주요추진내용", "추진내용", "내용", "진행현황", "현황"),
     },
     "stakeholders": {
         "project": ("관련프로젝트", "프로젝트"),
-        "discussed": ("협의내용", "협의한내용", "협업내용", "역할", "업무"),
-        "upcoming": ("추후고려사항", "고려사항", "앞으로필요한협의", "필요한협의", "향후협의"),
-        "_person": ("담당자", "성명", "이름", "담당"),  # 부서 열이 따로 있으면 그 이름에 붙이고, 없으면 이 열이 담당자(팀 또는 개인)다
-        "party": ("협의상대", "부서", "기관", "업체", "소속", "협업대상", "이해관계자"),
+        "role": ("주요역할", "협의내용", "협의한내용", "협업내용", "역할", "업무"),
+        "note": ("비고", "유의사항", "추후고려사항", "고려사항"),
+        "phone": ("연락처", "전화", "내선", "이메일"),
+        "name": ("담당자", "성명", "이름", "담당"),
+        "org": ("협의상대", "부서", "기관", "업체", "소속", "협업대상", "이해관계자"),
     },
     "partners": {
         "task": ("관련업무", "세부업무명", "업무명"),
@@ -78,11 +83,10 @@ HEADER_SYNONYMS: dict[str, dict[str, tuple[str, ...]]] = {
         "name": ("세부업무명", "업무명", "업무", "작업"),
     },
     "contacts": {
-        "org": ("기관", "회사", "업체", "소속기관"),
-        "dept": ("부서", "팀", "소속"),
-        "position": ("직책", "직급", "직위"),
+        "org": ("기관", "회사", "업체", "소속기관", "부서", "팀", "소속"),
         "phone": ("연락처", "전화", "내선", "휴대폰", "이메일"),
-        "task": ("관련업무", "담당업무", "업무"),
+        "role": ("주요역할", "관련업무", "담당업무", "업무", "역할"),
+        "note": ("비고", "유의사항"),
         "name": ("이름", "성명", "담당자"),
     },
     "systems": {
@@ -102,11 +106,12 @@ HEADER_SYNONYMS: dict[str, dict[str, tuple[str, ...]]] = {
 COMPANION_FIELDS: dict[str, set[str]] = {
     "overview": {"period", "note"},
     "regular": {"cycle", "timing", "procedure", "overview", "decisions"},
-    "irregular": {"overview", "goals", "progress", "future"},
-    "stakeholders": {"discussed", "upcoming", "project", "_person"},
+    "irregular": {"overview", "decisions", "key_points"},
+    "milestones": {"when", "project"},
+    "stakeholders": {"role", "note", "project", "org"},
     "partners": {"role", "phone", "note", "task"},
     "leave_tasks": {"schedule", "method", "task_type", "cautions"},
-    "contacts": {"phone", "org", "dept", "position"},
+    "contacts": {"phone", "org", "role"},
     "systems": {"purpose", "access", "how_to_get"},
     "dept_notes": {"detail", "basis"},
 }
@@ -148,7 +153,7 @@ class OfflineEngine:
                 for title, fields in self._sentence_candidates(spec, ev, profile):
                     self._add(slot, title, fields, ev)
         if spec.key in PARTY_SLOTS:
-            consolidate_parties(slot["items"])
+            consolidate_parties(slot["items"], party_key="name")
             del slot["items"][8:]
         note_gaps = self._dept_note_gaps(spec, slot, usable, profile)  # 부·팀 인수인계 목록: 자료에 나오면 항목으로, 없으면 확인 질문으로
         items = slot["items"]
@@ -201,7 +206,7 @@ class OfflineEngine:
                 header = [c.strip() for c in lines[i].strip("|").split("|")]
                 mapping = self._map_header(spec.key, header)
                 j = i + 2
-                titled = spec.title_field in mapping.values() or (spec.key == "stakeholders" and "_person" in mapping.values())
+                titled = spec.title_field in mapping.values() or (spec.key == "stakeholders" and "org" in mapping.values())
                 usable = titled and bool(set(mapping.values()) & COMPANION_FIELDS[spec.key])
                 while j < len(lines) and lines[j].startswith("|"):
                     if usable:
@@ -212,12 +217,8 @@ class OfflineEngine:
                             timing = fields.get("timing", "")
                             if cycle and cycle not in timing:
                                 fields["timing"] = f"{cycle} {timing}".strip()
-                        if spec.key == "stakeholders":
-                            person = fields.pop("_person", "")
-                            if person and not fields.get("party"):
-                                fields["party"] = person  # '담당자' 열만 있으면 그 열이 곧 담당자(팀 또는 개인)
-                            elif person and person not in fields["party"]:
-                                fields["party"] = f"{fields['party']} {person}"
+                        if spec.key == "stakeholders" and not fields.get("name") and fields.get("org"):
+                            fields["name"] = fields["org"]  # 담당자 열이 없으면 소속(팀·기관)이 곧 협업 대상이다
                         title = fields.get(spec.title_field, "")
                         if title:
                             yield title, fields
@@ -286,14 +287,14 @@ class OfflineEngine:
                 person = extract_person(clause) or (sender if sender and sender in clause else "")
                 name = f"{party} {person}".strip()  # 협의 상대: 팀 또는 개인
                 detail = re.sub(rf"^.*?{re.escape(party)}(\([^)]*\))?(과는|와는|과|와|에)?\s*", "", clause).strip(" ,.") or clause
-                yield name, {"party": name, "discussed": short_title(detail, 80)}
+                yield name, {"org": party, "name": person or party, "role": short_title(detail, 80)}
         elif key == "dept_notes":
             if DEPT_HINTS.search(sentence):
                 hint = DEPT_HINTS.search(sentence).group(0)
                 yield short_title(sentence, 30), {"topic": hint, "detail": sentence}
         elif key == "irregular":
             if PROJECT_HINTS.search(sentence) and not sentence.startswith(("또한", "그리고")):
-                yield short_title(sentence, 30), {"name": short_title(sentence, 40), "progress": sentence}
+                yield short_title(sentence, 30), {"name": short_title(sentence, 40), "overview": sentence}
         elif key == "systems":
             match = SYSTEM_NAME_RE.search(sentence)
             if match and re.search(r"권한|계정|콘솔|접속|로그인", sentence):
@@ -310,7 +311,7 @@ class OfflineEngine:
         return f"{names}{more}"
 
     def _gaps(self, spec: SlotSpec, items: list[SlotItem], coverage: str) -> list[Gap]:
-        priority = 1 if spec.key in ("stakeholders", "systems") else 2
+        priority = 2
         if coverage == "missing":
             return [
                 {
@@ -320,7 +321,7 @@ class OfflineEngine:
                     "description": f"자료에서 {spec.title} 정보를 찾지 못함",
                     "question": spec.default_question,
                     "priority": priority,
-                    "ask_for_document": spec.key in ("systems", "stakeholders"),
+                    "ask_for_document": False,
                     "status": "open",
                 }
             ]
@@ -347,8 +348,8 @@ class OfflineEngine:
                 break
         return gaps
 
-    def summarize_units(self, profile, slots) -> dict[str, str]:
-        return {}  # 자료에서 읽은 진행상황 요약을 그대로 둔다
+    def fill_auto(self, profile, slots, targets) -> dict[tuple[str, str, str], str]:
+        return {}  # 자료에서 읽은 값을 그대로 둔다
 
     # ------------------------------------------------------------------ STAGE 2
     def summarize(self, profile, slots, gaps, sources) -> str:
@@ -412,6 +413,9 @@ class OfflineEngine:
         elif gap and gap.get("reopened") and target is not None:  # 이미 답했던 질문을 다시 연 경우: 새 답이 앞서 적은 칸을 덮어쓴다
             keys = gap.get("reopen_fields") or missing_fields(spec, target) or [spec.fields[1].key]
             fields = self._correction_fields(spec, text, keys)
+        elif gap and gap.get("field") and target is not None:  # 묻는 칸이 정해진 질문: 답을 그 칸에(빠진 세부사항이면 기존 값 뒤에)
+            before = str((target.get("fields") or {}).get(gap["field"]) or "").strip()
+            fields = {gap["field"]: f"{before} {text}".strip() if gap.get("element") and before else text}
         else:
             fields = self._fields_from_answer(spec, text, target)
         title = item_label(spec, target) if target else short_title(text, 24)
@@ -446,10 +450,6 @@ class OfflineEngine:
         missing = missing_fields(spec, target) if target else [f.key for f in spec.fields]
         fields: dict[str, str] = {}
         remaining = text
-        if "party" in missing:
-            parties = extract_parties(text)
-            if parties:
-                fields["party"] = parties[0]
         if "timing" in missing and spec.key == "regular":
             cycle = infer_cycle(text)
             if cycle:

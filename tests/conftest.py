@@ -115,7 +115,6 @@ def kb():
 @pytest.fixture(autouse=True)
 def _offline(monkeypatch):
     monkeypatch.setenv("AMIGO_LLM_MODE", "offline")
-    monkeypatch.setenv("AMIGO_CONFIRM_UNITS", "0")  # 단위업무 확인 질문은 그 기능 테스트(test_unit_check.py)에서만 켠다
 
 
 # 양식의 장 순서(개요 → 정기 → 비정기 → 협업 → 시스템 → 부서)대로 질문하므로, 협업관계 질문부터 시험하려면 앞 장(정기·비정기)에 빈 필수 필드가 없어야 한다.
