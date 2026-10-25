@@ -52,6 +52,7 @@ from .state import (
     turn,
     upsert_item,
 )
+from .dept_info import clean_dept_info, has_info, targets as dept_targets
 from .template import (
     ASK_AUX,
     ASK_MAIN,
@@ -61,6 +62,7 @@ from .template import (
     STAGE_LABEL,
     STAGE_NUMBER,
     has_seeds,
+    profile_units,
     seed_items,
     slots_for,
 )
@@ -258,7 +260,60 @@ def settle_items(spec: Any, profile: dict[str, Any], slot: dict[str, Any]) -> No
         for item in items:
             fields = item.setdefault("fields", {})
             fields[spec.split_field] = scope_of(fields, profile)
+    if spec.key in SAME_TEAM_EXCLUDED and own_team(profile):
+        kept = [it for it in items if not same_team(it.get("fields") or {}, profile)]
+        if len(kept) != len(items):
+            logger.info("drop %s rows of the giver's own team: %d", spec.key, len(items) - len(kept))
+        items[:] = kept
+    if spec.key == "dept_notes":
+        _seed_dept_targets(spec, profile, items)
     slot["coverage"] = evaluate_coverage(spec, items)
+
+
+SAME_TEAM_EXCLUDED = ("partners", "stakeholders")  # 협업관계 표에는 인계자와 같은 팀 사람을 넣지 않는다(노션 10.25)
+
+
+def own_team(profile: dict[str, Any]) -> str:
+    """인계자의 팀 이름(소속 '디지털전략부 · 웹서비스팀' 의 마지막 부분)."""
+    parts = [p for p in re.split(r"[\s·/>]+", str((profile or {}).get("organization") or "")) if p]
+    return parts[-1] if parts else ""
+
+
+def same_team(fields: dict[str, Any], profile: dict[str, Any]) -> bool:
+    """협업 대상이 인계자와 같은 팀인지: 소속(없으면 이름)이 인계자 팀 이름과 같다(부서 이름이 붙어 있어도 된다)."""
+    team = normalize_title(own_team(profile))
+    org = normalize_title(str(fields.get("org") or "")) or normalize_title(str(fields.get("name") or ""))
+    return bool(team) and bool(org) and (org == team or org.endswith(team))
+
+
+def unit_names(profile: dict[str, Any]) -> list[str]:
+    """인계자의 업무 단위 이름들(단위업무 + 세부업무). 단위업무를 고르지 않은 예전 세션은 단위 업무명·담당 업무를 쓴다."""
+    names = [n for u in profile_units(profile) for n in (u["name"], *u["regular"], *u["irregular"]) if n]
+    if not names:
+        names = [str(profile.get(key) or "") for key in ("task_name", "duties")]
+    return [n for n in names if n.strip()]
+
+
+def related_to_units(text: str, profile: dict[str, Any]) -> bool:
+    """부서별 추가 자료(인수인계 목록의 서류·물품)가 인계자의 업무 단위와 관련 있는지: 이름이 글자쌍 2개 이상 겹친다."""
+    target = bigrams(text)
+    return any(len(target & bigrams(name)) >= 2 for name in unit_names(profile))
+
+
+def _seed_dept_targets(spec: Any, profile: dict[str, Any], items: list[dict[str, Any]]) -> None:
+    """소속 부·팀 인수인계 목록 중 인계자의 업무 단위와 관련된 서류·물품만 '부서별 추가 자료' 항목으로 미리 만든다.
+
+    자료에서 관리 내용을 찾지 못한 항목은 다른 칸처럼 빈 칸 질문(노션 질문 예시 · 1질문 1암묵지 · 빠진 세부사항만)으로 묻는다.
+    """
+    info = clean_dept_info((profile or {}).get("dept_notes"))
+    if not has_info(info):
+        return
+    for target in dept_targets(info):
+        name = target["name"]
+        if not related_to_units(name, profile) or any(same_name(item_label(spec, it), name) for it in items):
+            continue
+        items.append({"id": new_id(spec.key), "title": name, "fields": {"topic": name}, "field_meta": {"topic": {"rank": RANK_USER, "ts": None, "doc_class": "user", "label": "부서 인수인계 목록"}},
+                      "citations": [], "origin": "user", "confirmed": True})
 
 
 def _object_particle(word: str) -> str:
@@ -375,6 +430,8 @@ def _empty_slot_gaps(profile: dict[str, Any], slots: dict[str, Any], active: lis
             continue
         if spec.seed and has_seeds(profile):
             continue
+        if spec.key == "dept_notes" and has_info(clean_dept_info(profile.get("dept_notes"))):
+            continue  # 인수인계 목록이 있는데 업무 단위와 관련된 것이 없으면 묻지 않는다
         made.append(_gap(spec, "", f"{spec.title} 정보 보완 필요", spec.default_question, aux=spec.empty_ask == ASK_AUX))
     return made
 
@@ -387,8 +444,6 @@ def allowed_gap(gap: Gap, slots: dict[str, Any], profile: dict[str, Any]) -> boo
     - 칸에 값이 있으면 빠진 세부사항(element)만 묻는 질문이어야 한다.
     """
     spec = SLOT_BY_KEY.get(gap.get("slot", ""))
-    if spec is not None and spec.key == "dept_notes" and not gap.get("item_id"):
-        return True  # 부서별 추가 자료: 부·팀 인수인계 목록의 서류·물품마다 관리 방식을 묻는 질문(항목이 없어 답변이 새 항목이 된다)
     if spec is None or spec.embed_into or not gap.get("item_id") or not gap.get("field"):
         return False
     item = find_item((slots.get(spec.key) or {}).get("items", []), item_id=gap["item_id"])

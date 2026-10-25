@@ -192,10 +192,6 @@ class ClaudeEngine:
             related = next((it for it in slot["items"] if proposal.related_item_title and it.get("title") == proposal.related_item_title), None)
             # 양식의 칸을 묻는 질문만 남긴다(어느 칸·세부사항을 물을지는 nodes.allowed_gap 이 인계자 정보에 맞춘 뒤 다시 거른다).
             # 장 전체를 묻는 질문은 코드가 만든다(nodes._empty_slot_gaps).
-            if spec.key == "dept_notes" and related is None:  # 부서별 추가 자료: 목록의 대상마다 묻는 질문(답변이 새 항목이 된다)
-                gaps.append({"id": new_id("gap"), "slot": spec.key, "item_id": "", "field": "", "description": proposal.description, "question": proposal.question,
-                             "priority": _PRIORITY.get(proposal.priority, 2), "ask_for_document": proposal.ask_for_document, "status": "open"})
-                continue
             if related is None or spec.field(proposal.field) is None:
                 logger.info("drop question outside template cells: %s", proposal.question)
                 continue
