@@ -39,22 +39,15 @@ DOCS = [
 ]
 
 
-def test_interview_asks_which_card_an_unlinked_item_belongs_to_and_the_answer_links_it():
+def test_rows_that_match_no_card_are_neither_asked_nor_shown():
+    """협업관계 표의 칸은 묻지 않는 항목(미질의)이라, 어느 프로젝트에도 맞지 않는 행을 묻는 질문을 만들지 않고 문서에도 싣지 않는다."""
     agent = HandoverAgent()
     snap = agent.start("tc", PROFILE, FakeKB(DOCS)).snapshot
-    link_gaps = [g for g in snap["gaps"] if g.get("link_field")]
-    assert len(link_gaps) == 1 and link_gaps[0]["slot"] == "stakeholders" and "어느 프로젝트명에 해당하나요" in link_gaps[0]["question"] and "홈페이지 리뉴얼" in link_gaps[0]["question"]
-
-    current = next(g for g in snap["gaps"] if g["id"] == snap["current_gap_id"])
-    while not current.get("link_field"):
-        snap = agent.skip("tc", FakeKB(DOCS)).snapshot
-        current = next(g for g in snap["gaps"] if g["id"] == snap["current_gap_id"])
-    agent.send_message("tc", "홈페이지 리뉴얼", FakeKB(DOCS))
-    agent.send_message("tc", "네", FakeKB(DOCS))
+    assert not [g for g in snap["gaps"] if g["slot"] == "stakeholders" and not g.get("parent_id")]
+    rows = unlinked_children(snap["slots"], slots_for(PROFILE))
+    assert [item["fields"]["name"] for _, item in rows] == ["박지훈 차장"]
     doc = agent.finish("tc", FakeKB(DOCS)).snapshot["document"]
-    assert "어느 프로젝트명에 해당하는지" not in doc  # 연결되어 확인 필요 사항에서 빠진다
-    card = next(t for t in html_tables(doc) if any(texts(r)[:1] == ["주요 협업관계 및 협의사항"] for r in t))
-    assert any(texts(r) == ["재무팀 박지훈 차장", "예산 협의", "-"] for r in card)  # 홈페이지 리뉴얼 카드 안으로 들어갔다
+    assert "예산 협의" not in doc
 
 
 def test_children_are_analyzed_after_parents_and_get_the_parent_names(monkeypatch):

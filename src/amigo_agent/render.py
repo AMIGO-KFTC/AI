@@ -17,7 +17,7 @@ from typing import Any
 from .periods import plan_months
 from .relevance import bigrams
 from .state import Gap, SlotState, item_label, normalize_title
-from .template import MODE_LABELS, SLOT_BY_KEY, SlotSpec, leave_period, mode_of, slots_for
+from .template import MODE_LABELS, PARTNER_SCOPES, SLOT_BY_KEY, FieldSpec, SlotSpec, leave_period, mode_of, profile_units, slots_for
 
 class _Citations:
     """근거 번호. 장 순서 → 항목 순서 → 항목의 근거 순서로 매기고, 같은 (출처 표기, 조각) 은 같은 번호(BackEnd routers/evidence.py 와 같은 규칙)."""
@@ -30,7 +30,7 @@ class _Citations:
         if not spec.evidence:
             return {}
         placed: dict[str, list[int]] = {}
-        grams = {f.key: bigrams(str(fields.get(f.key) or "")) for f in spec.fields}
+        grams = {f.key: bigrams(str(fields.get(f.key) or "")) for f in spec.shown}
         for c in item.get("citations") or []:
             key = f"{c.get('label')}|{c.get('chunk_id') or c.get('quote', '')[:40]}"
             number = self.numbers.setdefault(key, len(self.numbers) + 1)
@@ -66,17 +66,41 @@ def _h(value: Any) -> str:
     return html.escape(text, quote=True).replace("\r", "").replace("\n", " / ") or "-"
 
 
-def _render_table(out: list[str], spec, items: list[dict], cites: _Citations) -> None:
-    headers = [f.label for f in spec.fields] + list(spec.handwritten)
+def _md_table(out: list[str], headers: list[str], rows: list[list[str]]) -> None:
     out.append("| " + " | ".join(headers) + " |")
     out.append("|" + "|".join(["---"] * len(headers)) + "|")
-    for item in items:
-        fields = dict(item.get("fields") or {})
-        fields.setdefault(spec.title_field, item_label(spec, item))
-        marks = cites.marks(spec, item, fields)
-        cells = [_cell(fields.get(f.key)) + marks.get(f.key, "") for f in spec.fields] + [HANDWRITTEN_BLANK] * len(spec.handwritten)
-        out.append("| " + " | ".join(cells) + " |")
+    out += ["| " + " | ".join(cells) + " |" for cells in rows]
     out.append("")
+
+
+def _scoped(spec: SlotSpec, items: list[dict]) -> list[tuple[str, list[FieldSpec], list[dict]]]:
+    """표를 나눠 싣는 장(협업 대상)이면 [(외부, 열, 행), (내부, 열, 행)], 아니면 [("", 열, 행)]. 행이 없는 쪽은 뺀다."""
+    columns = list(spec.shown)
+    if not spec.split_field:
+        return [("", columns, items)]
+    drop = dict(spec.split_drop)
+    out = []
+    for scope in PARTNER_SCOPES:
+        rows = [it for it in items if scope_of(it.get("fields") or {}) == scope]
+        if rows:
+            out.append((scope, [f for f in columns if f.key not in drop.get(scope, ())], rows))
+    return out
+
+
+def _render_table(out: list[str], spec, items: list[dict], cites: _Citations) -> None:
+    if not items:  # 있을 때만 적는 장(시스템 접근 권한): 직접 적을 수 있게 빈 행을 둔다
+        _md_table(out, [f.label for f in spec.shown] + list(spec.handwritten), [["-"] * (len(spec.shown) + len(spec.handwritten))])
+        return
+    for scope, columns, rows in _scoped(spec, items):
+        if scope:
+            out += [f"**{scope}**", ""]
+        cells = []
+        for item in rows:
+            fields = dict(item.get("fields") or {})
+            fields.setdefault(spec.title_field, item_label(spec, item))
+            marks = cites.marks(spec, item, fields)
+            cells.append([_cell(fields.get(f.key)) + marks.get(f.key, "") for f in columns] + [HANDWRITTEN_BLANK] * len(spec.handwritten))
+        _md_table(out, [f.label for f in columns] + list(spec.handwritten), cells)
 
 
 def _gantt_cells(months: set[int]) -> str:
@@ -119,23 +143,57 @@ def _render_gantt(out: list[str], spec, items: list[dict]) -> None:
     out += ["</table>", ""]
 
 
-def _same_project(a: str, b: str) -> bool:
+def same_name(a: str, b: str) -> bool:
+    """두 이름이 같은 업무·프로젝트를 가리키는지(공백·기호를 빼고 같거나, 4글자 이상이 서로 포함)."""
     x, y = normalize_title(a), normalize_title(b)
     return bool(x and y) and (x == y or (min(len(x), len(y)) >= 4 and (x in y or y in x)))
 
 
-def _columns(child: SlotSpec) -> list:
-    """카드 안 표의 열: 연결 필드(어느 항목에 붙는지)를 뺀 필드."""
-    return [f for f in child.fields if f.key != child.embed_link]
+EXTERNAL_RE = re.compile(r"\(주\)|㈜|주식회사|은행|공사|공단|협회|재단|진흥원|연구원|결제원|기관|업체|회사|솔루션|corp|inc|ltd", re.I)
+
+
+def scope_of(fields: dict[str, Any], profile: dict[str, Any] | None = None) -> str:
+    """협업 대상이 우리 기관 소속(내부)인지 다른 기관·업체(외부)인지. 분석 결과의 구분 값을 먼저 따르고, 없으면 소속 이름으로 정한다."""
+    raw = str(fields.get("scope") or "")
+    if "외부" in raw:
+        return "외부"
+    if "내부" in raw:
+        return "내부"
+    return "외부" if EXTERNAL_RE.search(f"{fields.get('org') or ''} {fields.get('name') or ''}") else "내부"
+
+
+def _embedded_rows(child: SlotSpec, rows: list[dict], span: int) -> list[str]:
+    """카드 안 표(협업관계·추진 경과)의 HTML 행. 나눠 싣는 표는 '외부' '내부' 소제목 행 아래에 각각 머리글과 행을 둔다."""
+    groups = _scoped(child, rows) if rows else []
+    body: list[str] = []
+    for scope, columns, items in groups:
+        last = f' colspan="{span - len(columns) + 1}"' if span > len(columns) else ""  # 열 수가 적은 표는 마지막 열을 넓힌다
+        cells = lambda values, tag: "".join(f"<{tag}{last if i == len(values) - 1 else ''}>{v}</{tag}>" for i, v in enumerate(values))  # noqa: E731,B023
+        if scope:
+            body.append(f'<tr><th colspan="{span}">{_h(scope)}</th></tr>')
+        body.append("<tr>" + cells([_h(f.label) for f in columns], "th") + "</tr>")
+        for c in items:
+            cf = dict(c.get("fields") or {})
+            cf.setdefault(child.title_field, c.get("title"))
+            body.append("<tr>" + cells([_h(cf.get(f.key)) for f in columns], "td") + "</tr>")
+    if not body:
+        return [f'<tr><th>{_h(child.embed_label)}</th><td colspan="{span}">-</td></tr>']
+    body[0] = f'<tr><th rowspan="{len(body)}">{_h(child.embed_label)}</th>' + body[0][len("<tr>"):]
+    return body
+
+
+def _children_for(child: SlotSpec, child_items: list[dict], name: str) -> list[dict]:
+    return [c for c in child_items if same_name(str((c.get("fields") or {}).get(child.embed_link) or ""), name)]
 
 
 def _render_cards(out: list[str], spec, items: list[dict], cites: _Citations, children: list[tuple[SlotSpec, list[dict]]]) -> None:
     """항목마다 '항목 | 내용' 표로 보여 준다.
 
-    다른 장에서 옮겨 온 항목(협업관계)이 있으면 그 행의 칸을 나눠 표로 넣으므로(정기업무: 소속 | 이름 | 주요역할 | 연락처 | 비고,
-    비정기 업무: 담당자 | 협의내용 | 추후 고려사항)
-    카드 전체를 HTML 표(rowspan/colspan)로 만든다. 옮겨 올 항목이 없는 장은 Markdown 표로 만든다.
+    다른 장에서 옮겨 온 표(협업관계: 외부 소속 | 이름 | 주요역할 | 연락처 | 비고, 내부 소속 | 이름 | 주요역할 | 비고 / 추진 경과: 시기 | 주요 추진 내용 | 비고)가
+    들어가는 장은 그 행의 칸을 나눠 넣으므로 카드 전체를 HTML 표(rowspan/colspan)로 만든다. 옮겨 올 표가 없는 장은 Markdown 표로 만든다.
+    내부 값(단위업무명·구분·상태)은 싣지 않는다.
     """
+    shown = [f for f in spec.shown if f.key != spec.title_field]
     for index, item in enumerate(items, start=1):
         fields = dict(item.get("fields") or {})
         fields.setdefault(spec.title_field, item_label(spec, item))
@@ -144,42 +202,24 @@ def _render_cards(out: list[str], spec, items: list[dict], cites: _Citations, ch
         out += [f"### {index}) {_cell(name)}{marks.get(spec.title_field, '')}", ""]
         if not children:
             out += ["| 항목 | 내용 |", "|---|---|"]
-            out += [f"| {f.label} | {_cell(fields.get(f.key))}{marks.get(f.key, '')} |" for f in spec.fields[1:]]
+            out += [f"| {f.label} | {_cell(fields.get(f.key))}{marks.get(f.key, '')} |" for f in shown]
             out.append("")
             continue
-        span = max(len(_columns(child_spec)) for child_spec, _ in children)
+        span = max(len(child_spec.shown) for child_spec, _ in children)
         wide = f' colspan="{span}"'
         rows = ["<table>", f"<tr><th>항목</th><th{wide}>내용</th></tr>"]
-        for f in spec.fields[1:]:
+        for f in shown:
             rows.append(f"<tr><th>{_h(f.label)}</th><td{wide}>{_h(fields.get(f.key))}{marks.get(f.key, '')}</td></tr>")
             for child_spec, child_items in children:
-                if child_spec.embed_after != f.key:
-                    continue
-                mine = [c for c in child_items if _same_project(str((c.get("fields") or {}).get(child_spec.embed_link) or ""), str(name or ""))]
-                if not mine:
-                    rows.append(f"<tr><th>{_h(child_spec.embed_label)}</th><td{wide}>-</td></tr>")
-                    continue
-                columns = _columns(child_spec)
-                last = f' colspan="{span - len(columns) + 1}"' if span > len(columns) else ""  # 열 수가 적은 표는 마지막 열을 넓힌다
-                cells = lambda values, tag: "".join(f"<{tag}{last if i == len(values) - 1 else ''}>{v}</{tag}>" for i, v in enumerate(values))  # noqa: E731
-                rows.append(f'<tr><th rowspan="{len(mine) + 1}">{_h(child_spec.embed_label)}</th>' + cells([_h(f.label) for f in columns], "th") + "</tr>")
-                for c in mine:
-                    cf = dict(c.get("fields") or {})
-                    cf.setdefault(child_spec.title_field, c.get("title"))
-                    rows.append("<tr>" + cells([_h(cf.get(f.key)) for f in columns], "td") + "</tr>")
+                if child_spec.embed_after == f.key:
+                    rows += _embedded_rows(child_spec, _children_for(child_spec, child_items, str(name or "")), span)
         rows.append("</table>")
         out += rows + [""]
-    # 어느 카드에도 맞지 않는 항목은 양식에 없는 표로 따로 싣지 않는다. 어느 항목인지 묻는 질문(nodes._link_gaps)이 화면의 확인 필요 사항에 남는다.
-
-
-def body_field(child: SlotSpec) -> str:
-    """연결 확인 문구에 함께 적을 내용 필드(협의내용·주요역할): 이름·연결 필드가 아닌 첫 '내용' 필드."""
-    skip = {child.title_field, child.embed_link, "org"}
-    return next(f.key for f in child.fields if f.key not in skip)
+    # 어느 카드에도 맞지 않는 표의 행은 양식에 없는 표로 따로 싣지 않는다.
 
 
 def unlinked_children(slots: dict[str, SlotState], active: list[SlotSpec]) -> list[tuple[SlotSpec, dict]]:
-    """붙는 장(정기업무·프로젝트)의 어느 항목과도 맞지 않는 협업관계 항목. 문서는 이런 항목을 양식에 없는 표로 싣지 않는다."""
+    """붙는 장(정기업무·프로젝트)의 어느 항목과도 맞지 않는 카드 안 표의 행. 문서는 이런 행을 양식에 없는 표로 싣지 않는다."""
     out = []
     for child in active:
         if not child.embed_into:
@@ -188,9 +228,28 @@ def unlinked_children(slots: dict[str, SlotState], active: list[SlotSpec]) -> li
         names = [str((p.get("fields") or {}).get(parent.title_field) or item_label(parent, p)) for p in (slots.get(child.embed_into) or {}).get("items", [])]
         for item in (slots.get(child.key) or {}).get("items", []):
             value = str((item.get("fields") or {}).get(child.embed_link) or "")
-            if not any(_same_project(value, name) for name in names):
+            if not any(same_name(value, name) for name in names):
                 out.append((child, item))
     return out
+
+
+def _render_slot(out: list[str], spec: SlotSpec, slots: dict[str, SlotState], active: tuple[SlotSpec, ...], cites: _Citations) -> None:
+    items = (slots.get(spec.key) or {}).get("items") or []
+    children = [(c, (slots.get(c.key) or {}).get("items") or []) for c in active if c.embed_into == spec.key]
+    if spec.muted_note:
+        out += [f"> {spec.muted_note}", ""]
+    if spec.layout == "table" and (items or spec.handwritten):  # 시스템 접근 권한은 비어 있어도 직접 적을 수 있게 빈 표를 둔다
+        _render_table(out, spec, items, cites)
+        return
+    if not items:
+        out += ["확인된 내용이 없습니다.", ""]
+        return
+    if spec.layout == "gantt":
+        _render_gantt(out, spec, items)
+    elif spec.layout == "card":
+        _render_cards(out, spec, items, cites, children)
+    else:
+        _render_table(out, spec, items, cites)
 
 
 def render_document(
@@ -206,9 +265,10 @@ def render_document(
     cites = _Citations()
     out: list[str] = ["# 업무 인수인계서", ""]
     active = slots_for(profile)
-    visible = [spec for spec in active if not spec.embed_into]  # 다른 장 안에 들어가는 장(협업관계)은 따로 싣지 않는다
+    visible = [spec for spec in active if not spec.embed_into]  # 다른 장 안에 들어가는 장(협업관계·추진 경과)은 따로 싣지 않는다
 
     giver = " ".join(x for x in (profile.get("name"), profile.get("position")) if x) or "-"
+    units = ", ".join(u["name"] for u in profile_units(profile) if u["name"])
     rows = [
         ("인계자", giver),
         ("소속", profile.get("organization")),
@@ -216,7 +276,7 @@ def render_document(
         ("휴가 기간", leave_period(profile)),
         ("인계 일자", profile.get("handover_date")),
         ("인계 유형", MODE_LABELS[mode_of(profile)]),
-        ("단위 업무명", profile.get("task_name")),
+        ("단위 업무명", units or profile.get("task_name")),
         ("담당 업무", profile.get("duties")),
         ("작성", f"{today.isoformat()} · AMIGO 자동 작성 초안 v{version}"),
     ]
@@ -224,21 +284,17 @@ def render_document(
     out += [f"| {k} | {_cell(v)} |" for k, v in rows if v]
     out.append("")
 
-    for number, spec in enumerate(visible, start=1):
-        slot = slots.get(spec.key) or {}
-        items = slot.get("items") or []
-        out += [f"## {number}. {spec.title}", ""]
-        children = [(c, (slots.get(c.key) or {}).get("items") or []) for c in active if c.embed_into == spec.key]
-        if not items and not any(rows for _, rows in children):
-            out += ["확인된 내용이 없습니다.", ""]
+    number = 0
+    for index, spec in enumerate(visible):
+        if spec.group and index > 0 and visible[index - 1].group == spec.group:
+            out += [f"### {spec.title}", ""]  # 같은 장 제목 아래 소제목(기타 자료: 시스템 접근 권한 · 부서별 추가 자료)
+            _render_slot(out, spec, slots, active, cites)
             continue
-        if not items:
-            out += ["확인된 프로젝트가 없습니다.", ""]
-        if spec.layout == "gantt":
-            _render_gantt(out, spec, items)
-        elif spec.layout == "card":
-            _render_cards(out, spec, items, cites, children)
+        number += 1
+        if spec.group:
+            out += [f"## {number}. {spec.group}", "", f"### {spec.title}", ""]
         else:
-            _render_table(out, spec, items, cites)
+            out += [f"## {number}. {spec.title}", ""]
+        _render_slot(out, spec, slots, active, cites)
 
     return "\n".join(out)

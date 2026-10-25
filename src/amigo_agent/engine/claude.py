@@ -22,12 +22,12 @@ from ..prompts import (
     INTERPRET_SYSTEM,
     PLAN_SYSTEM,
     SUMMARY_SYSTEM,
-    UNIT_SUMMARY_SYSTEM,
+    AUTO_FILL_SYSTEM,
     analysis_user,
     interpret_user,
     plan_user,
     summary_user,
-    unit_summary_user,
+    auto_fill_user,
 )
 from ..state import Gap, SlotState, combine_coverage, evaluate_coverage, missing_fields, new_id, upsert_item
 from ..template import ALL_FIELD_KEYS, SLOT_BY_KEY, SLOT_KEYS, SlotSpec
@@ -45,8 +45,9 @@ class GapProposal(BaseModel):
     description: str = Field(description="부족한 정보가 무엇인지 한 줄")
     question: str = Field(description="인계자에게 할 질문 한 문장(한 가지 주제만)")
     priority: Literal["high", "medium", "low"]
-    related_item_title: str = Field(description="비어 있는 칸이 있는 항목의 제목. 장에 항목이 하나도 없을 때만 빈 문자열")
-    field: str = Field(description="비어 있는 필드 키(이 장의 필드 중 하나). 장에 항목이 하나도 없을 때만 빈 문자열")
+    related_item_title: str = Field(description="묻는 칸이 있는 항목의 제목. 장에 항목이 하나도 없을 때만 빈 문자열")
+    field: str = Field(description="묻는 필드 키(이 장의 필드 중 하나). 장에 항목이 하나도 없을 때만 빈 문자열")
+    element: str = Field(description="칸에 값은 있지만 빠진 세부사항만 묻는 질문이면 그 세부사항 이름(예: '판단 근거'). 칸 전체를 묻는 질문이면 빈 문자열")
     ask_for_document: bool = Field(description="파일로 받는 편이 나은 정보면 true")
 
 
@@ -112,15 +113,15 @@ class SummaryOutput(BaseModel):
     message: str
 
 
-class UnitSummary(BaseModel):
+class AutoValue(BaseModel):
     model_config = _STRICT
-    item_id: str
-    summary: str
+    target_id: str
+    value: str
 
 
-class UnitSummaryOutput(BaseModel):
+class AutoFillOutput(BaseModel):
     model_config = _STRICT
-    summaries: list[UnitSummary]
+    values: list[AutoValue]
 
 
 def _no_relevant_message(query: str, results: list[Evidence]) -> str:
@@ -189,18 +190,22 @@ class ClaudeEngine:
         gaps: list[Gap] = []
         for proposal in output.gaps:
             related = next((it for it in slot["items"] if proposal.related_item_title and it.get("title") == proposal.related_item_title), None)
-            # 양식의 빈 칸만 묻는다: 항목의 비어 있는 필수 칸이거나, 장에 항목이 하나도 없을 때의 장 질문만 남기고 나머지는 버린다
-            empty_cell = related is not None and proposal.field in missing_fields(spec, related)
-            empty_slot = not slot["items"] and not proposal.related_item_title and not proposal.field and not gaps
-            if not (empty_cell or empty_slot):
-                logger.info("drop question outside empty template cells: %s", proposal.question)
+            # 양식의 칸을 묻는 질문만 남긴다(어느 칸·세부사항을 물을지는 nodes.allowed_gap 이 인계자 정보에 맞춘 뒤 다시 거른다).
+            # 장 전체를 묻는 질문은 코드가 만든다(nodes._empty_slot_gaps).
+            if spec.key == "dept_notes" and related is None:  # 부서별 추가 자료: 목록의 대상마다 묻는 질문(답변이 새 항목이 된다)
+                gaps.append({"id": new_id("gap"), "slot": spec.key, "item_id": "", "field": "", "description": proposal.description, "question": proposal.question,
+                             "priority": _PRIORITY.get(proposal.priority, 2), "ask_for_document": proposal.ask_for_document, "status": "open"})
+                continue
+            if related is None or spec.field(proposal.field) is None:
+                logger.info("drop question outside template cells: %s", proposal.question)
                 continue
             gaps.append(
                 {
                     "id": new_id("gap"),
                     "slot": spec.key,
-                    "item_id": related["id"] if related else "",
-                    "field": proposal.field if empty_cell else "",
+                    "item_id": related["id"],
+                    "field": proposal.field,
+                    "element": proposal.element.strip(),
                     "description": proposal.description,
                     "question": proposal.question,
                     "priority": _PRIORITY.get(proposal.priority, 2),
@@ -208,23 +213,10 @@ class ClaudeEngine:
                     "status": "open",
                 }
             )
-        if not slot["items"] and not gaps:  # 장이 통째로 비었으면 이 장의 항목을 묻는다(항목의 빈 칸은 collect_gaps 가 코드로 묻는다)
-            gaps.append(
-                {
-                    "id": new_id("gap"),
-                    "slot": spec.key,
-                    "item_id": "",
-                    "description": f"{spec.title} 정보 보완 필요",
-                    "question": spec.default_question,
-                    "priority": 2,
-                    "ask_for_document": False,
-                    "status": "open",
-                }
-            )
         return SlotResult(slot=slot, gaps=gaps)
 
     def plan_questions(self, profile: dict[str, Any], gaps: list[Gap]) -> tuple[list[str], set[str]]:
-        """장별 질문 후보의 중복을 찾는다 → (남은 질문 id, 뺄 질문 id). 묻는 순서는 모델이 아니라 코드가 양식의 장 순서로 정한다(questions.rank_by_slot_order)."""
+        """장별 질문 후보의 중복을 찾는다 → (남은 질문 id, 뺄 질문 id). 묻는 순서는 모델이 아니라 코드가 양식 순서로 정한다(questions.rank_by_template)."""
         if len(gaps) < 2:
             return [g["id"] for g in gaps], set()
         output = self.llm.structured(
@@ -249,20 +241,24 @@ class ClaudeEngine:
         )
         return output.message.strip()
 
-    def summarize_units(self, profile, slots) -> dict[str, str]:
-        """업무 단위 요약의 진행상황 요약을 지금까지 수집된 항목(자료 분석 + 인계자 답변)만으로 쓴다(문서를 만들 때)."""
-        units = (slots.get("overview") or {}).get("items") or []
-        if not units:
+    def fill_auto(self, profile, slots, targets) -> dict[tuple[str, str, str], str]:
+        """미질의 칸(개요·계획기간·진행상황 요약 등)을 지금까지 수집된 항목(자료 분석 + 인계자 답변)만으로 쓴다(문서를 만들 때)."""
+        if not targets:
             return {}
         output = self.llm.structured(
-            system=UNIT_SUMMARY_SYSTEM,
-            user=unit_summary_user(profile, slots),
-            output_model=UnitSummaryOutput,
+            system=AUTO_FILL_SYSTEM,
+            user=auto_fill_user(profile, slots, targets),
+            output_model=AutoFillOutput,
             effort=self.config.effort_chat,
-            max_tokens=4000,
+            max_tokens=8000,
         )
-        known = {it.get("id") for it in units}
-        return {s.item_id: s.summary.strip() for s in output.summaries if s.item_id in known and s.summary.strip()}
+        by_id = {f"t{i}": t for i, t in enumerate(targets)}
+        out: dict[tuple[str, str, str], str] = {}
+        for v in output.values:
+            t = by_id.get(v.target_id)
+            if t is not None and v.value.strip():
+                out[(t["slot"], t["item_id"], t["field"])] = v.value.strip()
+        return out
 
     # ------------------------------------------------------------------ STAGE 3
     def interpret(self, data: InterpretInput, kb: KBAdapter) -> Interpretation:

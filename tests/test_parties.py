@@ -7,8 +7,8 @@ from amigo_agent.state import empty_slots, upsert_item
 def _merged(*names):
     slot = empty_slots(["stakeholders"])["stakeholders"]
     for name in names:
-        upsert_item(slot, item_id="", title=name, fields={"party": name, "discussed": f"{name} 협의"}, citations=[], origin="document", defer=True)
-    consolidate_parties(slot["items"])
+        upsert_item(slot, item_id="", title=name, fields={"name": name, "role": f"{name} 협의"}, citations=[], origin="document", defer=True)
+    consolidate_parties(slot["items"], party_key="name")
     return slot["items"]
 
 
@@ -22,7 +22,7 @@ def test_parse_splits_org_person_title():
 def test_same_person_written_differently_becomes_one_item():
     items = _merged("박지훈 차장님", "재무팀", "재무팀 박지훈 차장", "재무팀(박지훈)")
     assert [i["title"] for i in items] == ["재무팀 박지훈 차장"]
-    assert len(items[0]["candidates"]["discussed"]) >= 3  # 값 후보는 버리지 않고 모아 둔다
+    assert len(items[0]["candidates"]["role"]) >= 3  # 값 후보는 버리지 않고 모아 둔다
 
 
 def test_different_people_in_same_org_stay_separate_and_bare_org_is_ambiguous():

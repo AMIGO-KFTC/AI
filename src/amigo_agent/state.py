@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Any, TypedDict
 
 from .precedence import RANK_REFERENCE, RANK_USER, beats, classify, now_ts, reason, user_meta
-from .template import SLOT_BY_KEY, SLOT_KEYS, SlotSpec
+from .template import ASK_AUX, ASK_MAIN, SLOT_BY_KEY, SLOT_KEYS, SlotSpec
 
 
 class Citation(TypedDict, total=False):
@@ -56,8 +56,13 @@ class Gap(TypedDict, total=False):
     rank: int  # 질문 계획(Claude)이 정한 전체 순서. 없으면 priority·장 순서로 정렬
     ask_for_document: bool
     link_field: str  # 협업관계 항목이 어느 프로젝트인지 묻는 질문이면 그 연결 필드 키(답변이 이 필드 값이 된다)
-    unit_check: bool  # 자료에서 찾은 단위업무가 인계 대상이 맞는지 예/아니요로 묻는 질문(맨 앞에 묻는다)
-    note_topic: str  # 부서별 특이사항을 확인하는 질문이면 그 특이사항 이름(답변이 이 이름의 항목이 된다)
+    element: str  # 칸에 값은 있지만 빠진 세부사항(작성 기준의 핵심 요소)만 묻는 질문이면 그 세부사항. 답은 기존 값에 덧붙인다
+    aux: bool  # 보조질문(화면에 '보조질문' 태그와 안내를 붙인다)
+    gate: str  # 예/아니요로 먼저 묻는 질문: ask(예 → follow 질문, 아니요 → '해당 없음') | confirm(예 → 확인 끝, 아니요 → follow 질문)
+    follow: str  # gate 질문 다음에 이어서 물을 주관식 질문
+    picker: str  # 답을 고르는 방식: period(주기 선택 또는 달력 기간 선택)
+    parent_id: str  # 다른 장의 항목(정기업무·프로젝트)에 대해 묻는 협업·추진 경과 질문이면 그 항목 id
+    note_topic: str  # 부·팀 인수인계 목록을 확인하는 질문이면 그 서류·물품(또는 비고) 이름(답변이 이 이름의 항목이 된다)
     status: str  # open | asked | answered | resolved | skipped
 
 
@@ -119,19 +124,14 @@ def evaluate_coverage(spec: SlotSpec, items: list[SlotItem]) -> str:
     return "partial"
 
 
-def missing_fields(spec: SlotSpec, item: SlotItem) -> list[str]:
-    """비어 있는 필수 필드. 조건부 필수 필드(required_when)는 조건이 맞을 때만 센다(조건 필드가 비어 있으면 아직 묻지 않는다)."""
+def missing_fields(spec: SlotSpec, item: SlotItem, *, aux: bool = False) -> list[str]:
+    """비어 있는 필수 질문 항목(aux=True 면 보조질문 항목도). 조건부 항목(ask_when)은 항목 값을 보고 묻는 방식을 정한다.
+
+    묻지 않는 항목(미질의·내부 값)은 세지 않는다. 충족 수준(coverage)은 필수 질문 항목만으로 판정한다.
+    """
     fields = item.get("fields") or {}
-    conditions = {key: (when, values) for key, when, values in spec.required_when}
-
-    def needed(key: str) -> bool:
-        if key not in conditions:
-            return True
-        when, values = conditions[key]
-        actual = str(fields.get(when, ""))
-        return any(v in actual for v in values)
-
-    return [key for key in spec.required if needed(key) and not str(fields.get(key, "")).strip()]
+    wanted = (ASK_MAIN, ASK_AUX) if aux else (ASK_MAIN,)
+    return [f.key for f in spec.fields if spec.ask_of(f.key, fields) in wanted and not str(fields.get(f.key, "")).strip()]
 
 
 def combine_coverage(rule: str, judged: str | None) -> str:

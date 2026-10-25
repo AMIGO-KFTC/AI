@@ -1,18 +1,23 @@
 """인수인계서 양식(슬롯) 정의.
 
-노션 '인수인계서 형식' 페이지의 최종 템플릿을 따른다. 인수인계서는 두 가지 버전이며, 버전은 인계자 정보의 `mode` 로 고른다.
+노션 '인수인계서 형식' 페이지의 최종 템플릿과 '수정사항' 페이지(10.25)를 따른다. 인수인계서는 두 가지 버전이며, 버전은 인계자 정보의 `mode` 로 고른다.
 
-[인사발령]  A. 업무 단위 요약 + 일정 명세표(월별 막대) → B. 정기업무(협업관계는 각 업무 안) → C. 비정기 업무(프로젝트성, 협업관계는 각 프로젝트 안) →
-            D. 시스템 접근 권한 → E. 부서별 추가 자료
-[장기휴가]  A. 세부 업무 → B. 시스템 접근 권한 → C. 주요 연락망
+[인사발령]  A. 업무 단위 요약 + 일정 명세표(월별 막대) → B. 정기업무(협업관계는 각 업무 안) →
+            C. 비정기 업무(프로젝트성, 추진 경과·협업관계는 각 프로젝트 안) → D. 기타 자료(시스템 접근 권한 · 부서별 추가 자료)
+[장기휴가]  A. 세부 업무 → B. 주요 연락망 → C. 기타 자료(시스템 접근 권한)
 
 항목 이름은 페이지의 항목을, `hint` 는 그 항목의 '핵심 질문'을 그대로 옮긴 것이다(질문 설계와 AI 지침에 쓰인다).
-양식의 모든 항목은 필수다(빠지면 질문한다). 조건이 붙은 항목(장기휴가 '현재 진행 상태'는 프로젝트성 업무만)은
-`required_when` 으로 조건이 맞을 때만 필수로 본다.
+항목마다 묻는 방식(FieldSpec.ask)이 정해져 있다.
+- main(필수 질문): 비어 있으면 묻는다. 노션 양식의 질문 예시가 있으면 그 문장으로 묻는다.
+- aux(보조질문): 비어 있으면 묻되, 화면에 '보조질문' 태그와 '꼭 답하지 않아도 된다'는 안내를 붙인다.
+- auto(미질의): 묻지 않는다. 자료와 답변으로 채우고, 문서를 만들기 직전에 비어 있으면 수집된 내용으로 요약해 넣는다.
+- hidden: 문서에 싣지 않는 내부 값(협업 대상의 내부/외부, 추진 경과의 상태, 연결 필드 등). 묻지 않는다.
+`gate` 가 켜진 항목은 코드가 묻는 질문이면 먼저 예/아니요로 묻고, '예'일 때 주관식으로 묻는다(아니요면 '해당 없음').
+`picker="period"` 인 항목(수행 시기)은 주기(매일·매주·매월·매년)를 고르거나, 정기적이지 않으면 달력에서 기간을 고른다.
 
-인수인계서의 각 장(章)을 '슬롯'으로 보고, 슬롯마다 채워야 할 필드·필수 필드·검색어·질문 예시를 정의한다.
-STAGE 1(분석)은 슬롯별로 근거를 찾아 항목을 채우고, 필수 필드가 비어 있으면 '공백(gap)'으로 판정해
-STAGE 3(Q&A)에서 한 번에 하나씩 질문한다. 사내 양식이 바뀌면 이 파일만 고치면 된다.
+인수인계서의 각 장(章)을 '슬롯'으로 보고, 슬롯마다 채워야 할 필드·검색어·질문 예시를 정의한다.
+STAGE 1(분석)은 슬롯별로 근거를 찾아 항목을 채우고, 묻는 항목이 비어 있으면 '공백(gap)'으로 판정해
+STAGE 3(Q&A)에서 한 번에 하나씩 질문한다. 사내 양식이 바뀌면 이 파일과 field_guides.py 만 고치면 된다.
 """
 
 from __future__ import annotations
@@ -24,12 +29,24 @@ MODE_REASSIGNMENT = "reassignment"  # 인사발령
 MODE_LEAVE = "leave"  # 장기휴가
 MODE_LABELS = {MODE_REASSIGNMENT: "인사발령", MODE_LEAVE: "장기휴가"}
 
+ASK_MAIN = "main"  # 필수 질문
+ASK_AUX = "aux"  # 보조질문
+ASK_AUTO = "auto"  # 미질의(묻지 않고 자료·답변으로 채운다)
+ASK_HIDDEN = "hidden"  # 문서에 싣지 않는 내부 값
+
+PERIOD_CHOICES = ("매일", "매주", "매월", "매년")  # 수행 시기의 주기 선택지(정기적이지 않으면 달력에서 기간을 고른다)
+
 
 @dataclass(frozen=True)
 class FieldSpec:
     key: str
     label: str
     hint: str = ""
+    ask: str = ASK_MAIN
+    gate: bool = False  # 코드가 묻는 질문이면 먼저 예/아니요로 묻는다(예 → 주관식, 아니요 → '해당 없음')
+    specific: bool = False  # 보조·예/아니요 항목이라도 자료에서 구체적인 사례를 찾았으면 AI 가 그 사례를 들어 바로 묻는다
+    picker: str = ""  # "period": 주기 선택 또는 달력 기간 선택
+    answers_only: bool = False  # 업로드 자료로는 채우지 않고 질의응답으로만 채운다
 
 
 @dataclass(frozen=True)
@@ -38,7 +55,6 @@ class SlotSpec:
     title: str
     description: str
     fields: tuple[FieldSpec, ...]
-    required: tuple[str, ...]
     min_items: int
     queries: tuple[str, ...]
     keywords: tuple[str, ...]
@@ -46,7 +62,7 @@ class SlotSpec:
     modes: tuple[str, ...] = (MODE_REASSIGNMENT,)  # 이 장을 쓰는 인수인계서 버전
     layout: str = "table"  # 문서에서 항목을 표(table), 항목별 카드(card), 월별 막대 일정표(gantt)로 보일지
     handwritten: tuple[str, ...] = ()  # AI 가 채우지 않고 문서에 빈칸으로 남기는 열(예: ID/PW)
-    evidence: bool = True  # 문서에 근거 번호([1] …)를 달고 근거 자료 목록에 올릴지
+    evidence: bool = True  # 문서에 근거 번호([1] …)를 달지
     # 이 장을 따로 싣지 않고 다른 장의 카드 안에 넣는다. embed_into=받는 장, embed_link=받는 장의 항목 이름과 맞출 필드,
     # embed_after=받는 장의 이 필드 행 뒤에 넣는다, embed_label=카드 안의 행 이름
     embed_into: str = ""
@@ -54,12 +70,18 @@ class SlotSpec:
     embed_after: str = ""
     embed_label: str = ""
     title_key: str = ""  # 항목 이름으로 쓸 필드(비우면 첫 필드). 표의 열 순서와 항목 이름 필드가 다를 때 쓴다
-    # 묻지 않고 문서를 만들 때 수집된 내용으로 채우는 필드(업무 단위 요약의 진행상황 요약). 필수가 아니고 질문 대상이 아니다.
-    auto: tuple[str, ...] = ()
-    # 이 장에서 묻는 질문의 범위(정규식). 비어 있지 않으면 이 표현이 들어간 질문만 남긴다(업무 단위 요약은 일정만 묻는다).
-    ask_scope: str = ""
-    # 조건부 필수: (필드, 조건 필드, 조건 값들). 조건 필드 값에 조건 값 중 하나가 들어 있을 때만 그 필드를 필수로 본다.
-    required_when: tuple[tuple[str, str, tuple[str, ...]], ...] = ()
+    # 조건부 묻는 방식: (필드, 조건 필드, 조건 값들, 묻는 방식). 조건 필드 값에 조건 값 중 하나가 들어 있으면 그 방식으로, 아니면 필드의 기본 방식으로 묻는다.
+    ask_when: tuple[tuple[str, str, tuple[str, ...], str], ...] = ()
+    # 장에 항목이 하나도 없을 때 default_question 을 물을지("" 이면 묻지 않음, main/aux). 인계자가 세부업무를 입력했으면 묻지 않는다(nodes).
+    empty_ask: str = ""
+    seed: str = ""  # 인계자 정보에서 항목을 미리 만든다: units(단위업무) / regular / irregular(세부업무) / leave(장기휴가 세부업무)
+    group: str = ""  # 여러 장을 한 장 제목 아래 소제목으로 묶는다(기타 자료)
+    split_field: str = ""  # 표를 이 필드 값(외부/내부)으로 나눠 싣는다
+    split_drop: tuple[tuple[str, tuple[str, ...]], ...] = ()  # 나눈 표마다 뺄 열(내부 표에는 연락처 열이 없다)
+    muted_note: str = ""  # 문서에서 이 장 위에 흐리게 보이는 안내(시스템 접근 권한: 있을 때만 작성)
+    # 받는 장의 항목마다 한 번 묻는 예/아니요 질문(협업 유의사항). 예면 follow_question 으로 묻는다. {name} = 받는 장의 항목 이름
+    gate_question: str = ""
+    follow_question: str = ""
 
     @property
     def leave(self) -> bool:
@@ -70,6 +92,28 @@ class SlotSpec:
     def title_field(self) -> str:
         return self.title_key or self.fields[0].key
 
+    @property
+    def required(self) -> tuple[str, ...]:
+        """필수 질문 항목(조건부 항목은 조건이 맞을 때 필수가 되므로 함께 센다)."""
+        conditional = {key for key, _, _, ask in self.ask_when if ask == ASK_MAIN}
+        return tuple(f.key for f in self.fields if f.ask == ASK_MAIN or f.key in conditional)
+
+    @property
+    def asked(self) -> tuple[str, ...]:
+        """묻는 항목(필수 질문 + 보조질문)."""
+        conditional = {key for key, _, _, _ in self.ask_when}
+        return tuple(f.key for f in self.fields if f.ask in (ASK_MAIN, ASK_AUX) or f.key in conditional)
+
+    @property
+    def auto(self) -> tuple[str, ...]:
+        """묻지 않고 자료·답변으로 채우는 항목(항목 이름 제외)."""
+        return tuple(f.key for f in self.fields if f.ask == ASK_AUTO and f.key != self.title_field)
+
+    @property
+    def shown(self) -> tuple[FieldSpec, ...]:
+        """문서에 싣는 필드(내부 값·연결 필드 제외)."""
+        return tuple(f for f in self.fields if f.ask != ASK_HIDDEN and f.key != self.embed_link)
+
     def field(self, key: str) -> FieldSpec | None:
         return next((f for f in self.fields if f.key == key), None)
 
@@ -77,201 +121,255 @@ class SlotSpec:
         spec = self.field(key)
         return spec.label if spec else key
 
+    def ask_of(self, key: str, fields: dict[str, Any] | None = None) -> str:
+        """그 항목에서 이 필드를 묻는 방식(조건부 방식은 항목 값을 보고 정한다)."""
+        spec = self.field(key)
+        if spec is None:
+            return ASK_HIDDEN
+        for name, when, values, ask in self.ask_when:
+            if name == key:
+                actual = str((fields or {}).get(when, ""))
+                return ask if any(v in actual for v in values) else spec.ask
+        return spec.ask
+
 
 BOTH = (MODE_REASSIGNMENT, MODE_LEAVE)
+OTHER_MATERIALS = "기타 자료"
+PARTNER_SCOPES = ("외부", "내부")  # 협업 대상 표를 나누는 순서. 우리 기관 소속이면 내부, 그 밖(외부 기관·업체)은 외부
 
-# 슬롯 순서는 문서 순서다. 버전별로 걸러 쓰므로(slots_for) 두 버전의 장 순서가 각각 템플릿과 같다.
+# 슬롯 순서는 문서 순서이자 질문 순서다. 버전별로 걸러 쓰므로(slots_for) 두 버전의 장 순서가 각각 템플릿과 같다.
 SLOTS: tuple[SlotSpec, ...] = (
     # ------------------------------------------------------------------ [인사발령] A
     SlotSpec(
         key="overview",
         title="업무 단위 요약 + 일정 명세표",
-        description="인계하는 단위 업무(예: 공동망 운영, 40년사 발간 추진)와 업무별 계획기간(월별 일정). "
-        "이 장의 질문은 단위업무명과 일정(언제 시작해 언제 끝나는지, 주기·마감)만 묻습니다. 진행상황·업무 내용은 묻지 않습니다(정기업무·비정기 업무 장에서 자세히 다룹니다). "
-        "진행상황 요약은 문서를 만들 때 지금까지 수집된 내용으로 자동 작성합니다. "
-        "자료에 나오는 인계자의 단위업무는 인계자가 입력한 단위업무 외의 것도 빠뜨리지 말고 모두 항목으로 만듭니다(업무분장표·계획서에 있는 업무 등). "
-        "입력하지 않은 업무가 실제 인계 대상인지는 인계자에게 예/아니요로 따로 확인합니다.",
+        description="인계하는 단위 업무(업무분장상 단위업무, 예: 공동망 운영, 40년사 발간 추진)와 업무별 계획기간(월별 일정). "
+        "단위업무는 인계자가 직제규정 시행세칙에서 고른 것이며, 이 장은 질문하지 않습니다. 계획기간은 사업계획서·추진계획 등 자료에서 읽고, "
+        "진행상황 요약은 문서를 만들 때 지금까지 수집된 내용으로 자동 작성합니다.",
         fields=(
-            FieldSpec("name", "단위업무명", "예: 공동망 운영"),
-            FieldSpec("period", "계획기간", "예: 2026.03~2026.12, 매월 상시"),
-            FieldSpec("note", "진행상황 요약", "단위 업무가 지금 어디까지 진행되었는가?(문서를 만들 때 수집된 내용으로 자동 요약, 질문하지 않음)"),
+            FieldSpec("name", "단위업무명", "예: 공동망 운영", ask=ASK_AUTO),
+            FieldSpec("period", "계획기간", "예: 2026.03~2026.12, 매월 상시", ask=ASK_AUTO),
+            FieldSpec("note", "진행상황 요약", "단위 업무가 지금 어디까지 진행되었는가?", ask=ASK_AUTO),
         ),
-        required=("name", "period"),
-        auto=("note",),
-        ask_scope=r"기간|일정|언제|시기|시작|종료|끝나|마감|기한|주기|매일|매주|매월|매년|분기|상시|부터|까지|\d+\s*월|년도|연중|단위\s*업무|업무명",
         min_items=1,
         queries=("단위업무 업무 개요 계획 일정", "연간 계획 추진 일정 기간", "담당 업무 목록 업무 분장", "추진 현황 진행 상황"),
         keywords=("업무", "담당", "계획", "기간", "일정", "추진", "운영", "현황", "진행"),
         default_question="인계하실 단위 업무를 업무명과 계획기간(언제부터 언제까지, 또는 상시)과 함께 알려 주시겠어요?",
         layout="gantt",
         evidence=False,
+        seed="units",
     ),
     # ------------------------------------------------------------------ [인사발령] B
     SlotSpec(
         key="regular",
         title="정기업무",
-        description="일·주·월·분기·연 단위로 정기성이 있는 세부 업무. 개요·시기·절차·중점 관리사항·의사결정 근거·향후 과제·참고자료를 담는다(주요 협업관계는 별도 장 partners 의 표).",
+        description="일·주·월·분기·연 단위로 정기성이 있는 세부 업무. 인계자가 단위업무마다 입력한 정기 세부업무가 항목이다. "
+        "개요·시기·절차·중점 관리사항·의사결정 근거·협업관계·향후 과제·기타(참고자료 등)를 담는다(주요 협업관계는 별도 장 partners 의 표).",
         fields=(
-            FieldSpec("name", "세부 업무명", "예: 차액 정산 수행"),
-            FieldSpec("overview", "업무 개요", "무엇을, 왜 하는가?"),
-            FieldSpec("timing", "수행 시기", "언제 하는가?"),
+            FieldSpec("name", "세부 업무명", "예: 월간 경영실적 보고 업무"),
+            FieldSpec("unit", "단위업무명", "이 세부업무가 속한 단위업무", ask=ASK_HIDDEN),
+            FieldSpec("overview", "업무 개요", "무엇을, 왜 하는가?", ask=ASK_AUTO),
+            FieldSpec("timing", "수행 시기", "언제 하는가?", picker="period"),
             FieldSpec("procedure", "수행 절차", "어떻게 하는가?"),
-            FieldSpec("key_points", "중점 관리사항", "무엇을 중요하게 관리하고 주의해야 하는가?"),
-            FieldSpec("decisions", "주요 의사결정 및 판단 근거", "무엇을, 왜 그렇게 결정했는가?"),
-            FieldSpec("future", "향후 과제 및 발전 방향", "무엇을 이어가고 개선해야 하는가?"),
-            FieldSpec("references", "참고자료 및 관련 근거", "어떤 자료와 규정을 참고해야 하는가?"),
+            FieldSpec("key_points", "중점 관리사항", "무엇을 중요하게 관리하고 주의해야 하는가?", gate=True, specific=True),
+            FieldSpec("decisions", "주요 의사결정 및 판단 근거", "무엇을, 왜 그렇게 결정했는가?", gate=True, specific=True),
+            FieldSpec("future", "향후 과제 및 발전 방향", "무엇을 이어가고 개선해야 하는가?", ask=ASK_AUX, gate=True),
+            FieldSpec("references", "기타(참고자료 등)", "어떤 자료와 규정을 참고해야 하는가?", ask=ASK_AUX),
         ),
-        required=("name", "overview", "timing", "procedure", "key_points", "decisions", "future", "references"),
         min_items=1,
         queries=("매일 매주 매월 정기 반복 업무", "주기적 점검 보고 일정 기한", "연간 일정 분기 갱신 신청", "업무 절차 처리 방법"),
         keywords=("매일", "매주", "매월", "분기", "매년", "정기", "주기", "월간", "주간", "연간", "영업일", "절차"),
         default_question="정기적으로 반복하는 세부 업무(매일·매월·매년 등)가 있다면, 업무명과 수행 시기, 수행 절차를 알려 주시겠어요?",
         layout="card",
+        empty_ask=ASK_MAIN,
+        seed="regular",
     ),
     SlotSpec(
         key="partners",
         title="정기업무 주요 협업관계",
-        description="정기업무를 하면서 함께 일하는 부서·사람. 문서에서는 각 정기업무의 '주요 협업관계' 칸을 나눠 소속 | 이름 | 주요역할 | 연락처 | 비고(유의사항) 표로 들어간다.",
+        description="정기업무를 하면서 함께 일하는 부서·사람. 문서에서는 각 정기업무의 '주요 협업관계' 칸에 외부(소속 | 이름 | 주요역할 | 연락처 | 비고(유의사항))와 "
+        "내부(소속 | 이름 | 주요역할 | 비고(유의사항)) 표로 나눠 들어간다. 메일·메신저·회의록·연락처 자료에서 찾아 채우고, 유의사항만 인계자에게 묻는다.",
         fields=(
-            FieldSpec("org", "소속", "팀·부서·기관·업체. 예: 재무팀"),
-            FieldSpec("name", "이름", "사람 이름(직급 포함 가능) 또는 팀·기관명만. 예: 박지훈 차장, 재무팀, (주)한빛웹솔루션. 업무명·시스템명은 쓰지 않는다"),
-            FieldSpec("role", "주요역할", "이 업무에서 무엇을 함께 하는가?"),
-            FieldSpec("phone", "연락처", "전화·내선·메일"),
-            FieldSpec("note", "비고(유의사항)", "협업할 때 무엇을 주의해야 하는가?"),
-            FieldSpec("task", "세부 업무명", "어느 정기업무에서의 협업인지"),
+            FieldSpec("org", "소속", "팀·부서·기관·업체. 예: 재무팀", ask=ASK_AUTO),
+            FieldSpec("name", "이름", "사람 이름(직급 포함 가능) 또는 팀·기관명만. 예: 박지훈 차장, 재무팀, (주)한빛웹솔루션. 업무명·시스템명은 쓰지 않는다", ask=ASK_AUTO),
+            FieldSpec("role", "주요역할", "이 업무에서 무엇을 함께 하는가? 예: 메신저로 실적자료 제출 요청·보고", ask=ASK_AUTO),
+            FieldSpec("phone", "연락처", "전화·내선·메일(외부 협업 대상만)", ask=ASK_AUTO),
+            FieldSpec("note", "비고(유의사항)", "협업할 때 무엇을 주의해야 하는가?", ask=ASK_AUTO),
+            FieldSpec("scope", "구분", "내부(우리 기관 소속 부서·사람) 또는 외부(다른 기관·업체) 중 하나", ask=ASK_HIDDEN),
+            FieldSpec("task", "세부 업무명", "어느 정기업무에서의 협업인지", ask=ASK_HIDDEN),
         ),
-        required=("org", "name", "role", "phone", "note", "task"),
         min_items=1,
         queries=("정기 업무 협업 부서 담당자 연락처", "유관 부서 협조 요청 담당자", "업체 담당자 연락처 역할", "협업 시 유의사항"),
         keywords=("팀", "부서", "업체", "담당자", "협업", "협조", "연락처", "내선", "역할", "유의"),
-        default_question="정기업무를 하면서 함께 일하는 부서나 담당자가 있다면, 어느 업무에서 누구(소속·이름)와 무엇을 하는지, 연락처와 협업할 때 주의할 점을 알려 주시겠어요?",
+        default_question="정기업무를 하면서 함께 일하는 부서나 담당자가 있다면, 어느 업무에서 누구(소속·이름)와 무엇을 하는지 알려 주시겠어요?",
         evidence=False,
         embed_into="regular",
         embed_link="task",
         embed_after="decisions",
         embed_label="주요 협업관계",
         title_key="name",
+        split_field="scope",
+        split_drop=(("내부", ("phone",)),),
+        gate_question="'{name}' 업무를 하면서 협업할 때 유의해야 할 사항이 있는 사람(부서)이 있나요?",
+        follow_question="'{name}' 업무에서 누구(소속·이름)와 협업할 때 어떤 점을 유의해야 하나요?",
     ),
     # ------------------------------------------------------------------ [인사발령] C
     SlotSpec(
         key="irregular",
         title="비정기 업무(프로젝트성)",
-        description="프로젝트처럼 비정기로 수행하는 세부 업무. 개요·추진배경, 목표, 추진 경과, 협업관계 및 협의사항, 의사결정 근거, 중점 관리사항, 향후 추진과제를 담는다.",
+        description="프로젝트처럼 비정기로 수행하는 세부 업무. 인계자가 단위업무마다 입력한 비정기 세부업무가 항목이다. "
+        "프로젝트 개요, 추진 경과(별도 장 milestones 의 표), 주요 협업관계(별도 장 stakeholders 의 표), 주요 의사결정 및 판단 근거, 기타(중점 관리사항)를 담는다.",
         fields=(
             FieldSpec("name", "프로젝트명", "예: 은행 대리업 구축 프로젝트"),
-            FieldSpec("overview", "프로젝트 개요", "무엇을, 왜 추진하는가?"),
-            FieldSpec("goals", "프로젝트 목표", "무엇을 달성하려는가?"),
-            FieldSpec("progress", "추진 경과", "지금까지 무엇을 했으며, 현재 어디까지 진행되었는가?"),
-            FieldSpec("decisions", "주요 의사결정 및 판단 근거", "무엇을, 왜 그렇게 결정했는가?"),
-            FieldSpec("key_points", "중점 관리사항", "무엇을 중요하게 관리하고 주의해야 하는가?"),
-            FieldSpec("future", "향후 추진과제 및 발전 방향", "앞으로 무엇을 해야 하며, 어떤 방향으로 추진해야 하는가?"),
+            FieldSpec("unit", "단위업무명", "이 프로젝트가 속한 단위업무", ask=ASK_HIDDEN),
+            FieldSpec("overview", "프로젝트 개요", "무엇을, 왜 추진하는가?", ask=ASK_AUTO),
+            FieldSpec("decisions", "주요 의사결정 및 판단 근거", "무엇을, 왜 그렇게 결정했는가?", gate=True, specific=True),
+            FieldSpec("key_points", "기타(중점 관리사항)", "무엇을 중요하게 관리하고 주의해야 하는가?", ask=ASK_AUX, specific=True),
         ),
-        required=("name", "overview", "goals", "progress", "decisions", "key_points", "future"),
         min_items=1,
         queries=("진행 중인 과제 프로젝트 현황", "추진 배경 목표 기대성과", "추진 경과 향후 과제 결정사항", "사업추진 계획"),
         keywords=("과제", "프로젝트", "추진", "진행", "예정", "사업", "입찰", "검토 중", "배경", "목표", "경과"),
         default_question="진행 중이거나 곧 시작될 프로젝트성 업무가 있다면, 추진 배경과 목표, 현재 진행 상황을 알려 주시겠어요?",
         layout="card",
+        empty_ask=ASK_MAIN,
+        seed="irregular",
     ),
     SlotSpec(
-        key="stakeholders",
-        title="비정기 업무 협업관계 및 협의사항",
-        description="비정기 업무에서 누구와 무엇을 협의했고, 앞으로 어떤 협의가 필요한지. 문서에서는 각 프로젝트의 '주요 협업관계 및 협의사항' 칸을 나눠 담당자 | 협의내용 | 추후 고려사항 표로 들어간다.",
+        key="milestones",
+        title="비정기 업무 추진 경과",
+        description="프로젝트의 주요 추진 단계를 시기순으로 한 줄씩(시기 | 주요 추진 내용 | 비고). 문서에서는 각 프로젝트의 '추진 경과' 칸에 표로 들어간다. "
+        "단계마다 상태(완료/진행/계획)를 내부 값으로 둔다: 인계 시점 기준 끝난 일은 완료, 지금 하고 있는 일은 진행, 앞으로 할 일은 계획.",
         fields=(
-            FieldSpec("party", "담당자", "팀 또는 개인. 예: 재무팀, 재무팀 박지훈 차장"),
-            FieldSpec("project", "프로젝트명", "어느 프로젝트에서의 협의인지"),
-            FieldSpec("discussed", "협의내용", "누구와 무엇을 협의했는가?"),
-            FieldSpec("upcoming", "추후 고려사항", "앞으로 어떤 협의가 필요한가?"),
+            FieldSpec("when", "시기", "예: 2026.03, 2026.06~09", ask=ASK_AUTO),
+            FieldSpec("content", "주요 추진 내용", "그 시기에 무엇을 했는가(할 것인가)? 예: 사용자 요구사항 조사 완료", ask=ASK_AUTO),
+            FieldSpec("note", "비고", "산출물·특이사항", ask=ASK_AUTO),
+            FieldSpec("status", "상태", "완료 / 진행 / 계획 중 하나", ask=ASK_HIDDEN),
+            FieldSpec("project", "프로젝트명", "어느 프로젝트의 경과인지", ask=ASK_HIDDEN),
         ),
-        required=("party", "project", "discussed", "upcoming"),
         min_items=1,
-        queries=("협업 부서 담당자 협의", "유관 부서 협의 요청 보고", "외부 기관 업체 담당자 협의", "일정 및 부서별 협조사항"),
-        keywords=("팀", "부서", "업체", "담당자", "협의", "협업", "기관", "요청", "보고", "협조"),
-        default_question="프로젝트를 하면서 협의한 팀이나 담당자가 있다면, 어느 프로젝트에서 누구와 무엇을 협의했고 앞으로 어떤 협의가 더 필요한지 알려 주시겠어요?",
+        queries=("추진 경과 일정 단계 완료", "추진 계획 일정표 마일스톤", "현재 진행 단계 시범운영"),
+        keywords=("경과", "추진", "완료", "진행", "예정", "계획", "단계", "착수", "오픈"),
+        default_question="지금까지 어떤 단계로 추진되었으며, 현재 진행 상황과 완료된 주요 성과는 무엇인가요?",
         evidence=False,
         embed_into="irregular",
         embed_link="project",
-        embed_after="progress",
-        embed_label="주요 협업관계 및 협의사항",
+        embed_after="overview",
+        embed_label="추진 경과",
+        title_key="content",
+    ),
+    SlotSpec(
+        key="stakeholders",
+        title="비정기 업무 주요 협업관계",
+        description="프로젝트를 하면서 함께 일하는 부서·기관·사람. 문서에서는 각 프로젝트의 '주요 협업관계' 칸에 정기업무와 같은 형식으로 "
+        "외부(소속 | 이름 | 주요역할 | 연락처 | 비고(유의사항))와 내부(소속 | 이름 | 주요역할 | 비고(유의사항)) 표로 나눠 들어간다. 유의사항만 인계자에게 묻는다.",
+        fields=(
+            FieldSpec("org", "소속", "팀·부서·기관·업체. 예: 정보화부서", ask=ASK_AUTO),
+            FieldSpec("name", "이름", "사람 이름(직급 포함 가능) 또는 팀·기관명만. 업무명·시스템명은 쓰지 않는다", ask=ASK_AUTO),
+            FieldSpec("role", "주요역할", "이 프로젝트에서 무엇을 함께 했고, 앞으로 어떤 협의가 필요한가?", ask=ASK_AUTO),
+            FieldSpec("phone", "연락처", "전화·내선·메일(외부 협업 대상만)", ask=ASK_AUTO),
+            FieldSpec("note", "비고(유의사항)", "협업할 때 무엇을 주의해야 하는가?", ask=ASK_AUTO),
+            FieldSpec("scope", "구분", "내부(우리 기관 소속 부서·사람) 또는 외부(다른 기관·업체) 중 하나", ask=ASK_HIDDEN),
+            FieldSpec("project", "프로젝트명", "어느 프로젝트에서의 협업인지", ask=ASK_HIDDEN),
+        ),
+        min_items=1,
+        queries=("협업 부서 담당자 협의", "유관 부서 협의 요청 보고", "외부 기관 업체 담당자 협의", "일정 및 부서별 협조사항"),
+        keywords=("팀", "부서", "업체", "담당자", "협의", "협업", "기관", "요청", "보고", "협조"),
+        default_question="프로젝트를 하면서 협의한 팀이나 담당자가 있다면, 어느 프로젝트에서 누구와 무엇을 협의했는지 알려 주시겠어요?",
+        evidence=False,
+        embed_into="irregular",
+        embed_link="project",
+        embed_after="overview",
+        embed_label="주요 협업관계",
+        title_key="name",
+        split_field="scope",
+        split_drop=(("내부", ("phone",)),),
+        gate_question="'{name}' 프로젝트를 하면서 협업할 때 유의해야 할 사항이 있는 사람(부서)이 있나요?",
+        follow_question="'{name}' 프로젝트에서 누구(소속·이름)와 협업할 때 어떤 점을 유의해야 하나요?",
     ),
     # ------------------------------------------------------------------ [장기휴가] A
-    # ------------------------------------------------------------------ [장기휴가] B
     SlotSpec(
         key="leave_tasks",
         title="세부 업무",
-        description="부재 기간 중 대신 처리할 세부 업무. 업무 유형, 일정·처리사항, (프로젝트성이면) 현재 진행 상태, 처리방법, 주의사항 및 후속조치, 참고자료를 담는다.",
+        description="부재 기간 중 대신 처리할 세부 업무. 인계자가 정기/비정기로 나눠 입력한 세부업무가 항목이다. "
+        "업무 유형, 일정·처리사항, 현재 진행 상태, 처리방법, 주의사항 및 후속조치, 참고자료를 담는다.",
         fields=(
-            FieldSpec("name", "세부 업무명", "예: 차액 정산 수행"),
-            FieldSpec("task_type", "업무 유형", "정기/수시/프로젝트성 중 하나"),
+            FieldSpec("name", "세부 업무명", "예: 월간 경영실적 보고"),
+            FieldSpec("task_type", "업무 유형", "정기 / 비정기 중 하나(인계자가 입력할 때 고른 값)", ask=ASK_AUTO),
             FieldSpec("schedule", "주요 일정 및 처리사항", "부재 기간 중 언제, 무엇을 처리해야 하는가?"),
-            FieldSpec("status", "현재 진행 상태", "(프로젝트성 업무만) 현재 진행단계는 어느 정도이며, 다음 진행단계는 어떻게 되는가?"),
+            FieldSpec("status", "현재 진행 상태", "현재 진행단계는 어느 정도이며, 다음 진행단계는 어떻게 되는가?", ask=ASK_AUX),
             FieldSpec("method", "업무 처리방법", "어떻게 처리하면 되는가?"),
-            FieldSpec("cautions", "주의사항 및 후속조치", "조심할 점, 문제 발생 시 대응, 아직 끝나지 않은 일이 있는가?"),
-            FieldSpec("references", "참고자료", "업무에 참고할 수 있는 자료가 어떤 것이 있는가?"),
+            FieldSpec("cautions", "주의사항 및 후속조치", "조심할 점, 문제 발생 시 대응, 아직 끝나지 않은 일이 있는가?", ask=ASK_AUX, specific=True),
+            FieldSpec("references", "참고자료", "업무에 참고할 수 있는 자료가 어떤 것이 있는가?", ask=ASK_AUX, answers_only=True),
         ),
-        required=("name", "task_type", "schedule", "status", "method", "cautions", "references"),
-        required_when=(("status", "task_type", ("프로젝트",)),),
+        ask_when=(("status", "task_type", ("비정기",), ASK_MAIN),),
         min_items=1,
         modes=(MODE_LEAVE,),
         queries=("매일 매주 매월 정기 반복 업무", "처리 방법 절차 일정 마감", "프로젝트 진행 상태 다음 단계", "주의사항 비상 연락 미결 후속 조치"),
         keywords=("일정", "처리", "절차", "방법", "마감", "프로젝트", "진행", "주의", "비상", "미결", "후속", "매뉴얼"),
-        default_question="휴가 중에 대신 처리해야 하는 세부 업무가 있다면, 업무명과 업무 유형(정기/수시/프로젝트성), 처리 일정과 처리 방법을 알려 주시겠어요?",
+        default_question="휴가 중에 대신 처리해야 하는 세부 업무가 있다면, 업무명과 처리 일정, 처리 방법을 알려 주시겠어요?",
         layout="card",
+        empty_ask=ASK_MAIN,
+        seed="leave",
     ),
-    # ------------------------------------------------------------------ 두 버전 공통: 시스템 접근 권한([인사발령] D / [장기휴가] B)
+    # ------------------------------------------------------------------ [장기휴가] B
+    SlotSpec(
+        key="contacts",
+        title="주요 연락망",
+        description="부재 중 업무와 관련해 연락할 사람. 인사발령의 주요 협업관계와 같은 형식으로 외부(소속 | 이름 | 주요역할 | 연락처 | 비고(유의사항))와 "
+        "내부(소속 | 이름 | 주요역할 | 비고(유의사항)) 표로 나눠 싣는다.",
+        fields=(
+            FieldSpec("org", "소속", "기관·부서. 예: 금융결제원, 재무팀", ask=ASK_AUTO),
+            FieldSpec("name", "이름", "사람 이름(직급 포함 가능) 또는 팀·기관명. 예: 박지훈 차장", ask=ASK_AUTO),
+            FieldSpec("role", "주요역할", "어떤 업무로 연락하는가?", ask=ASK_AUTO),
+            FieldSpec("phone", "연락처", "예: 내선 2345, 02-555-0182(외부 연락처만)", ask=ASK_AUTO),
+            FieldSpec("note", "비고(유의사항)", "연락할 때 주의할 점", ask=ASK_AUTO),
+            FieldSpec("scope", "구분", "내부(우리 기관 소속) 또는 외부(다른 기관·업체) 중 하나", ask=ASK_HIDDEN),
+        ),
+        min_items=1,
+        modes=(MODE_LEAVE,),
+        queries=("담당자 연락처 내선 전화", "비상 연락망 문의처", "협업 부서 업체 담당자"),
+        keywords=("연락", "연락처", "내선", "전화", "담당자", "문의", "메일"),
+        default_question="휴가 중 업무와 관련해 연락할 사람이 있다면 소속·이름·연락처와 어떤 일로 연락하는지 알려 주시겠어요?",
+        title_key="name",
+        empty_ask=ASK_AUX,
+        split_field="scope",
+        split_drop=(("내부", ("phone",)),),
+    ),
+    # ------------------------------------------------------------------ 두 버전 공통: 기타 자료 — 시스템 접근 권한([인사발령] D / [장기휴가] C)
     SlotSpec(
         key="systems",
         title="시스템 접근 권한",
-        description="업무에 쓰는 시스템·도구, 용도, 필요한 권한 수준과 권한 신청·이관 방법. ID/PW 는 보안상 AI 에 입력하지 않고 문서에서 수기로 적는다.",
+        description="업무에 쓰는 시스템·도구, 용도, 필요한 권한 수준과 권한 신청·이관 방법. 묻지 않고 자료에 있을 때만 채운다. ID/PW 는 보안상 AI 에 입력하지 않고 문서에서 수기로 적는다.",
         fields=(
-            FieldSpec("name", "시스템"),
-            FieldSpec("purpose", "용도"),
-            FieldSpec("access", "권한 수준", "관리자/편집자/조회 등"),
-            FieldSpec("how_to_get", "신청·이관 방법"),
+            FieldSpec("name", "시스템", ask=ASK_AUTO),
+            FieldSpec("purpose", "용도", ask=ASK_AUTO),
+            FieldSpec("access", "권한 수준", "관리자/편집자/조회 등", ask=ASK_AUTO),
+            FieldSpec("how_to_get", "신청·이관 방법", ask=ASK_AUTO),
         ),
-        required=("name", "purpose", "access", "how_to_get"),
         min_items=1,
         modes=BOTH,
         queries=("사용 시스템 접근 권한 계정", "권한 신청 방법 이관 승인", "관리자 계정 콘솔 접속"),
         keywords=("시스템", "권한", "계정", "콘솔", "관리자", "접속", "CMS", "로그인"),
         default_question="업무에 사용하는 시스템과, 인수자가 권한을 받으려면 어떻게 신청해야 하는지 알려 주시겠어요?\n(ID/PW 는 적지 마세요)",
         handwritten=("ID / PW (수기 기재)",),
+        group=OTHER_MATERIALS,
     ),
-    # ------------------------------------------------------------------ [인사발령] E
+    # ------------------------------------------------------------------ [인사발령] 기타 자료 — 그 밖의 자료(부서별 추가 자료)
     SlotSpec(
         key="dept_notes",
         title="부서별 추가 자료",
-        description="부서 업무의 특성상 반드시 챙겨야 하는 사항(외주 관리, 가맹점 관리, 라이선스 등)과 근거가 되는 사무인수인계서 사무목록·세부시행세칙.",
+        description="부서 업무의 특성상 반드시 챙겨야 하는 사항(외주 관리, 가맹점 관리, 라이선스 등)과 근거가 되는 사무인수인계서 사무목록·세부시행세칙. 부서 정보가 있으면 대상마다 관리 방식을 묻는다.",
         fields=(
-            FieldSpec("topic", "추가 자료", "예: 가맹점 관리, 외주 관리, 라이선스"),
+            FieldSpec("topic", "추가 자료", "예: 가맹점 관리, 외주 관리, 라이선스", ask=ASK_AUTO),
             FieldSpec("detail", "관리 내용", "무엇을 어떻게 챙겨야 하는지"),
-            FieldSpec("basis", "관련 규정·자료", "사무인수인계서 사무목록·세부시행세칙 등"),  # 문서 표의 근거 번호 열('근거')과 이름이 겹치지 않게
+            FieldSpec("basis", "관련 규정·자료", "사무인수인계서 사무목록·세부시행세칙 등", ask=ASK_AUTO),  # 문서 표의 근거 번호 열('근거')과 이름이 겹치지 않게
         ),
-        required=("topic", "detail", "basis"),
         min_items=1,
         queries=("부서별 추가 자료 외주 관리 가맹점 관리", "라이선스 라이센스 관리 계약", "사무인수인계서 사무목록 세부시행세칙"),
         keywords=("외주", "가맹점", "라이선스", "라이센스", "위탁", "특이", "지침", "세칙", "사무목록"),
         default_question="소속 부서만의 추가 관리 사항(외주 관리, 가맹점 관리, 라이선스 등)이 있나요?\n없으면 '해당 없음'으로 건너뛰어 주세요.",
-    ),
-    # ------------------------------------------------------------------ [장기휴가] C
-    SlotSpec(
-        key="contacts",
-        title="주요 연락망",
-        description="부재 중 업무와 관련해 연락할 사람: 이름·기관·부서·직책·연락처·관련 업무.",
-        fields=(
-            FieldSpec("name", "이름", "예: 박지훈"),
-            FieldSpec("org", "기관", "예: 금융결제원, (주)한빛웹솔루션"),
-            FieldSpec("dept", "부서", "예: 재무팀"),
-            FieldSpec("position", "직책", "예: 차장"),
-            FieldSpec("phone", "연락처", "예: 내선 2345, 02-555-0182"),
-            FieldSpec("task", "관련 업무", "어떤 업무로 연락하는가?"),
-        ),
-        required=("name", "org", "dept", "position", "phone", "task"),
-        min_items=1,
-        modes=(MODE_LEAVE,),
-        queries=("담당자 연락처 내선 전화", "비상 연락망 문의처", "협업 부서 업체 담당자"),
-        keywords=("연락", "연락처", "내선", "전화", "담당자", "문의", "메일"),
-        default_question="휴가 중 업무와 관련해 연락할 사람이 있다면 이름·기관·부서·직책·연락처와 관련 업무를 알려 주시겠어요?",
+        group=OTHER_MATERIALS,
+        empty_ask=ASK_MAIN,
     ),
 )
 
@@ -301,6 +399,40 @@ def slots_for(profile: dict[str, Any] | None) -> tuple[SlotSpec, ...]:
     """이번 인수인계서에 쓰는 슬롯(버전별로 장 구성이 다르다)."""
     mode = mode_of(profile)
     return tuple(s for s in SLOTS if mode in s.modes)
+
+
+def profile_units(profile: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """인계자가 고른 단위업무와 단위업무별 세부업무: [{"name", "regular": [...], "irregular": [...]}] (빈 이름·빈 값은 뺀다).
+
+    인사발령은 직제규정 시행세칙에서 고른 단위업무마다 정기/비정기 세부업무를 입력하고, 장기휴가는 이름 없는 단위업무 하나에 세부업무만 담는다.
+    """
+    out: list[dict[str, Any]] = []
+    for raw in (profile or {}).get("units") or []:
+        if not isinstance(raw, dict):
+            continue
+        name = " ".join(str(raw.get("name") or "").split())
+        tasks = {kind: [" ".join(str(t).split()) for t in raw.get(kind) or [] if str(t).strip()] for kind in ("regular", "irregular")}
+        if name or tasks["regular"] or tasks["irregular"]:
+            out.append({"name": name, **tasks})
+    return out
+
+
+def seed_items(spec: SlotSpec, profile: dict[str, Any] | None) -> list[dict[str, str]]:
+    """인계자 정보로 미리 만드는 항목의 필드: 단위업무(업무 단위 요약) · 세부업무(정기/비정기, 장기휴가 세부 업무)."""
+    units = profile_units(profile)
+    if spec.seed == "units":
+        return [{"name": u["name"]} for u in units if u["name"]]
+    if spec.seed in ("regular", "irregular"):
+        return [{"name": task, "unit": u["name"]} for u in units for task in u[spec.seed]]
+    if spec.seed == "leave":
+        kinds = (("regular", "정기"), ("irregular", "비정기"))
+        return [{"name": task, "task_type": label} for kind, label in kinds for u in units for task in u[kind]]
+    return []
+
+
+def has_seeds(profile: dict[str, Any] | None) -> bool:
+    """인계자가 단위업무·세부업무를 입력했는지(입력했으면 장의 항목은 입력한 것만 쓴다)."""
+    return bool(profile_units(profile))
 
 
 COVERAGE_LABELS = {"sufficient": "충분", "partial": "부분", "missing": "부족"}
