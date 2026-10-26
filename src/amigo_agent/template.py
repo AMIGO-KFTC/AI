@@ -138,8 +138,9 @@ BOTH = (MODE_REASSIGNMENT, MODE_LEAVE)
 FORM_OFFICE = "office"  # 팀장이 쓰는 인수인계서: template 의 양식 대신 원내 양식(OFFICE_ITEMS)으로 만든다(profile["form"])
 
 # 원내 인수인계서 양식(노션 '수정사항' 10.25 '팀장님용 인수인계서는 원내 양식으로'): (목록, 비고). 8~10번은 양식에서 생략한다.
+# 1번 '주요 사업계획 및 집행상황표'는 일반 인수인계의 업무 단위 요약 + 일정 명세표(overview: 단위업무명 · 계획기간 · 진행상황 요약)를 그대로 쓴다.
+OFFICE_FIRST_TITLE = "1. 주요 사업계획 및 집행상황표"
 OFFICE_ITEMS: tuple[tuple[str, str], ...] = (
-    ("1. 주요 사업계획 및 집행상황표", ""),
     ("2. 주요 현안사항", ""),
     ("3. 주요 미결사항의 경과 및 처리대책", ""),
     ("4. 제계약서 명세표", ""),
@@ -398,13 +399,15 @@ OFFICE_SLOT = SlotSpec(
     title="원내 인수인계서 양식",
     description="팀장이 쓰는 원내 양식의 인수인계 목록. 항목은 아래 정해진 목록이며 항목 제목·목록(name)에는 목록 이름을 번호까지 글자 그대로 쓴다: "
     + ", ".join(name for name, _ in OFFICE_ITEMS)
+    + ". 목록별 작성 참고사항(문서에는 싣지 않는다): "
+    + "; ".join(f"{name} — {note}" for name, note in OFFICE_ITEMS if note)
     + ". 각 목록에 해당하는 서류·현황·내용을 근거 자료에서 찾아 '내용'에 개괄식으로 짧게 적고(여럿이면 ' / '로 이어 씀) 근거 ID 를 붙인다. "
     "자료에서 하나라도 찾은 목록은 모두 항목으로 만들고, 찾지 못한 목록만 비워 둔다. 목록에 없는 항목은 만들지 않는다. "
     "따로 질문하지 않고, 인수자에게 꼭 필요한 현안·주의점만 한 번 포괄적으로 묻는다.",
     fields=(
         FieldSpec("name", "목록", ask=ASK_AUTO),
         FieldSpec("content", "내용", "이 목록에 해당하는 서류·현황·내용(자료에서 찾은 것)", ask=ASK_AUTO),
-        FieldSpec("note", "비고", "원내 양식의 비고(작성 시 유의사항)", ask=ASK_AUTO),
+        FieldSpec("note", "비고", "원내 양식의 비고(AI 가 내용을 쓸 때 참고하는 사항, 문서에는 싣지 않음)", ask=ASK_HIDDEN),
     ),
     min_items=1,
     modes=(),
@@ -439,7 +442,7 @@ def leave_period(profile: dict[str, Any] | None) -> str:
 def slots_for(profile: dict[str, Any] | None) -> tuple[SlotSpec, ...]:
     """이번 인수인계서에 쓰는 슬롯(버전별로 장 구성이 다르다). 팀장이 쓰는 인수인계서(form=office)는 원내 양식 한 장만 쓴다."""
     if is_office(profile):
-        return (OFFICE_SLOT,)
+        return (SLOT_BY_KEY["overview"], OFFICE_SLOT)
     mode = mode_of(profile)
     return tuple(s for s in SLOTS if mode in s.modes)
 

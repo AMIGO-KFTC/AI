@@ -220,13 +220,17 @@ def test_team_lead_handover_uses_the_office_form_and_asks_once():
     from amigo_agent.template import OFFICE_ITEMS
 
     profile = {**PROFILE, "form": "office"}
-    assert keys(profile) == ["office_items"]
+    assert keys(profile) == ["overview", "office_items"]
     agent = HandoverAgent()
     snap = agent.start("office1", profile, FakeKB()).snapshot
     assert [it["title"] for it in snap["slots"]["office_items"]["items"]] == [name for name, _ in OFFICE_ITEMS]  # 8~10번은 생략
     assert len(snap["gaps"]) == 1 and snap["gaps"][0]["aux"]  # 암묵지는 한 번만 포괄적으로 묻는다
     doc = agent.finish("office1", FakeKB()).snapshot["document"]
-    assert "## 1. 원내 인수인계서 양식" in doc and "| 목록 | 내용 | 비고 |" in doc and "| 5. 중요 인장 보관 명세표 | - | 인장명, 인영, 보관자 직책·성명 |" in doc
+    assert "## 1. 주요 사업계획 및 집행상황표" in doc and '<th colspan="12">계획기간</th>' in doc  # 1번은 업무 단위 요약 + 일정 명세표
+    assert "## 5. 중요 인장 보관 명세표\n\n□ 해당 없음  \n" in doc and "| 목록 |" not in doc  # 공문서처럼 제목 + □ 개괄식
+    assert "※" not in doc and "보관자 직책·성명" not in doc  # 비고는 AI 참고사항이라 문서에 싣지 않는다
+    from amigo_agent.template import OFFICE_SLOT
+    assert "인장명, 인영, 보관자 직책·성명" in OFFICE_SLOT.description  # 분석 프롬프트에는 들어간다
     assert "정기업무" not in doc and "원내 양식(팀장)" in doc
 
 

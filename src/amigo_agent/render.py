@@ -17,7 +17,7 @@ from typing import Any
 from .periods import plan_months
 from .relevance import bigrams
 from .state import Gap, SlotState, item_label, normalize_title
-from .template import MODE_LABELS, is_office, PARTNER_SCOPES, SLOT_BY_KEY, FieldSpec, SlotSpec, leave_period, mode_of, profile_units, slots_for
+from .template import MODE_LABELS, OFFICE_FIRST_TITLE, OFFICE_SLOT, is_office, PARTNER_SCOPES, SLOT_BY_KEY, FieldSpec, SlotSpec, leave_period, mode_of, profile_units, slots_for
 
 class _Citations:
     """근거 번호. 장 순서 → 항목 순서 → 항목의 근거 순서로 매기고, 같은 (출처 표기, 조각) 은 같은 번호(BackEnd routers/evidence.py 와 같은 규칙)."""
@@ -259,6 +259,23 @@ def _render_slot(out: list[str], spec: SlotSpec, slots: dict[str, SlotState], ac
         _render_table(out, spec, items, cites)
 
 
+def _render_office(out: list[str], slots: dict[str, SlotState], active: tuple[SlotSpec, ...], cites: _Citations) -> None:
+    """원내 양식: '## 1. 주요 사업계획 및 집행상황표'(월별 일정표) 뒤에 목록마다 '## 번호. 목록' 과 □ 개괄식 문장. 비고는 AI 참고사항이라 싣지 않는다."""
+    out += [f"## {OFFICE_FIRST_TITLE}", ""]
+    _render_slot(out, SLOT_BY_KEY["overview"], slots, active, cites)
+    for number, item in enumerate((slots.get(OFFICE_SLOT.key) or {}).get("items") or [], start=2):
+        fields = dict(item.get("fields") or {})
+        fields.setdefault("name", item_label(OFFICE_SLOT, item))
+        marks = cites.marks(OFFICE_SLOT, item, fields)
+        out += [f"## {number}. {re.sub(r'^\d+\.\s*', '', _clean(fields['name']))}", ""]  # 생략한 목록(8~10번)을 빼고 화면 목차와 같은 순서 번호
+        lines = [line.strip() for line in re.split(r"\s+/\s+|\n+", _clean(fields.get("content"))) if line.strip()]
+        lines = [re.sub(r"^(\d+\.|[-•□○])\s*", "", line) for line in lines]
+        if lines:
+            lines[-1] += marks.get("content", "") + marks.get("name", "")
+        out += [f"□ {line}  " for line in lines] or ["□ 해당 없음  "]
+        out.append("")
+
+
 def render_document(
     *,
     profile: dict[str, Any],
@@ -290,6 +307,10 @@ def render_document(
     out += ["| 구분 | 내용 |", "|---|---|"]
     out += [f"| {k} | {_cell(v)} |" for k, v in rows if v]
     out.append("")
+
+    if is_office(profile):  # 팀장용 원내 양식: 공문서처럼 목록마다 제목 + 개괄식 문장(□). 1번은 업무 단위 요약 + 일정 명세표
+        _render_office(out, slots, active, cites)
+        return "\n".join(out)
 
     number = 0
     for index, spec in enumerate(visible):
