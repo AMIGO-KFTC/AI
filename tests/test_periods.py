@@ -69,21 +69,32 @@ def test_gantt_single_year_keeps_twelve_months():
     assert '<th colspan="12">계획기간</th>' in doc and "년</th>" not in doc
 
 
-def test_gantt_crossing_year_adds_year_header_and_continuous_bar():
+def test_gantt_crossing_year_uses_quarters():
+    """계획기간이 올해(2026) 밖(2025·2027)에 걸치면 월별 대신 분기별로, 연도 행과 함께 그린다."""
     doc = _overview_doc("2026.03~2026.12", "26년12월 ~ 27년1월", "상시")
-    assert '<th colspan="12">계획기간</th>' in doc  # 2026.03 ~ 2027.02 (12칸)
-    assert '<tr><th colspan="10">2026년</th><th colspan="2">2027년</th></tr>' in doc
+    assert '<th colspan="8">계획기간</th>' in doc  # 2026·2027 = 8분기
+    assert '<tr><th colspan="4">2026년</th><th colspan="4">2027년</th></tr>' in doc
+    assert "<th>1분기</th><th>2분기</th><th>3분기</th><th>4분기</th><th>1분기</th>" in doc and "월</th>" not in doc.split("<tr><td>")[0].split("계획기간")[1]
     row = next(line for line in doc.splitlines() if line.startswith("<tr><td>업무1</td>"))
-    # 3월~11월 빈칸 9개 뒤 12월·1월이 이어진 막대 한 칸(colspan 2), 2월 빈칸
-    assert row.count("<td></td>") == 10 and 'colspan="2">&nbsp;</td><td></td><td>' in row
-    always = next(line for line in doc.splitlines() if line.startswith("<tr><td>업무2</td>"))
-    assert 'colspan="12"' in always
+    # 2026 4분기(12월)와 2027 1분기(1월)가 이어진 막대 한 칸(colspan 2), 나머지 빈칸
+    assert row.count("<td></td>") == 6 and 'colspan="2">&nbsp;</td>' in row
+    assert 'colspan="8"' in next(line for line in doc.splitlines() if line.startswith("<tr><td>업무2</td>"))
 
 
-def test_gantt_long_span_widens_table():
-    doc = _overview_doc("2026.07~2027.12")
-    assert '<th colspan="18">계획기간</th>' in doc
-    assert '<tr><th colspan="6">2026년</th><th colspan="12">2027년</th></tr>' in doc
+def test_gantt_three_years_and_dropped_years():
+    """2025~2027 3년은 12분기. 2024년 이하·2028년 이상은 버린다."""
+    doc = _overview_doc("2025.07~2027.12", "2024.01~2024.12", "2028.03~2028.09")
+    assert '<th colspan="12">계획기간</th>' in doc and '<tr><th colspan="4">2025년</th><th colspan="4">2026년</th><th colspan="4">2027년</th></tr>' in doc
+    row0 = next(line for line in doc.splitlines() if line.startswith("<tr><td>업무0</td>"))
+    assert row0.count("<td></td>") == 2 and 'colspan="10"' in row0  # 2025 3분기부터 2027 4분기까지 10칸
+    for name in ("업무1", "업무2"):  # 그리는 해 밖이라 막대가 없고 원문이 비고에 남는다
+        row = next(line for line in doc.splitlines() if line.startswith(f"<tr><td>{name}</td>"))
+        assert "bar" not in row and "계획기간: 202" in row
+
+
+def test_gantt_within_this_year_stays_monthly():
+    doc = _overview_doc("2026.03~2026.12", "상시")
+    assert '<th colspan="12">계획기간</th>' in doc and "<th>1월</th>" in doc and "분기" not in doc
 
 
 def test_tilde_pairs_do_not_become_strikethrough():

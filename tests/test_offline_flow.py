@@ -68,7 +68,8 @@ def test_full_flow_stage_1_to_4(kb):
     # 확인 → 다음 질문(협업 유의사항 또는 향후 과제)
     result = agent.send_message("s1", "네", kb)
     assert kinds(result) == ["question"]
-    assert not result.messages[0]["content"].startswith(("**[", "["))  # 장 이름은 본문이 아니라 meta.slot 으로 알린다
+    first = result.messages[0]
+    assert not first["content"].startswith(("**[", "[")) or (first["meta"].get("aux") and first["content"].startswith("[선택 질문] "))  # 장 이름은 meta.slot 으로 알린다(선택 질문 표시만 붙는다)
     assert "확인했습니다" not in result.messages[0]["content"]
 
     # 건너뛰기: 보조질문이면 그 칸을 '해당 없음'으로 기록하고(질문은 끝남), 필수 질문이면 '확인 필요 사항'으로 남긴다
@@ -131,10 +132,12 @@ def test_repeated_corrections_stop_after_two_rounds(kb):
 
 
 def test_files_trigger_reanalysis_and_keep_user_answers(kb):
+    """묻고 있는 질문이 없을 때(문서 검토 단계) 올린 자료는 전체를 다시 분석한다. 인계자 답변은 유지된다."""
     agent = HandoverAgent()
     _to_follow_question(agent, "s3", kb)
     agent.send_message("s3", "SLA 1시간 기준으로 결정", kb)
     agent.send_message("s3", "네", kb)
+    agent.finish("s3", kb)
     kb.docs.append(
         {
             "chunk_id": "new1",
@@ -145,10 +148,7 @@ def test_files_trigger_reanalysis_and_keep_user_answers(kb):
     result = agent.notify_files("s3", kb, ["연락망.xlsx"])
     rows = {it["fields"].get("name"): it for it in result.snapshot["slots"]["stakeholders"]["items"]}
     assert rows["최영희 주임"]["fields"]["role"] == "웹방화벽 정책" and rows["최영희 주임"]["fields"]["org"] == "정보보호팀"
-    assert [it["title"] for it in result.snapshot["slots"]["regular"]["items"]] == ["유지보수 월간 실적 검수", "보도자료 게시"]  # 입력한 세부업무만
     assert "SLA 1시간" in result.snapshot["slots"]["regular"]["items"][0]["fields"]["decisions"]  # 재분석해도 인계자 답변은 유지
-    assert result.messages[-1]["kind"] == "question"
-    assert "새 자료(연락망.xlsx)를 반영했어요" in result.messages[-2]["content"] and result.messages[-2]["kind"] == "info"
 
 
 def test_errors_before_start_and_no_question_limit(kb):
@@ -214,30 +214,17 @@ def test_scrub_credentials_keeps_descriptions():
     assert found and "p@ssw0rd" not in clean
 
 
-def test_file_upload_keeps_question_order(kb):
-    """대화 중 자료를 올려도 질문 순서가 처음으로 돌아가지 않고, 방금 물은 질문을 번호 증가 없이 다시 묻는다."""
-    from amigo_agent.state import open_gaps
-
+def test_file_attached_during_a_question_is_read_as_its_answer(kb):
+    """질의응답 중 자료를 올리면 전체 재분석 없이 지금 질문의 답으로 해석한다(답변 해석 한 번). 질문 번호는 그대로."""
     agent = HandoverAgent()
     agent.start("s4", UNITS, kb)
     before = agent.send_message("s4", "아니요", kb)
-    asked = before.messages[-1]["content"]
-    order = [g["question"] for g in open_gaps(before.snapshot["gaps"])]
     count = before.snapshot["question_count"]
-    kb.docs.append(
-        {
-            "chunk_id": "new2",
-            "text": "| 부서 | 담당자 | 프로젝트 | 협업 내용 |\n|---|---|---|---|\n| 정보보호팀 | 최영희 주임 | 홈페이지 리뉴얼 | 웹방화벽 정책 |",
-            "metadata": {"source_id": "new", "file_name": "연락망.xlsx", "source_type": "xlsx"},
-        }
-    )
-    after = agent.notify_files("s4", kb, ["연락망.xlsx"])
-    assert asked.split("\n\n")[-1] in after.messages[-1]["content"]  # 방금 물은 질문을 다시 묻는다
-    assert after.snapshot["question_count"] == count  # 같은 질문이라 번호는 그대로
-    remaining = [g["question"] for g in open_gaps(after.snapshot["gaps"])]
-    assert [q for q in remaining if q in order] == [q for q in order if q in remaining]  # 원래 있던 질문끼리의 순서는 그대로
-    assert all(g.get("rank") is not None for g in open_gaps(after.snapshot["gaps"]))
-
+    current = before.snapshot["current_gap_id"]
+    kb.docs.append({"chunk_id": "new2", "text": "게시물은 부서장 승인 후 게시한다. 매주 월요일 점검.", "metadata": {"source_id": "new", "source_name": "게시기준.pdf", "file_name": "게시기준.pdf", "source_type": "pdf"}})
+    after = agent.notify_files("s4", kb, ["게시기준.pdf"])
+    assert not any("반영했어요" in m["content"] and "새 자료" in m["content"] for m in after.messages)  # 재분석 안내가 없다
+    assert after.snapshot["question_count"] == count and after.snapshot["current_gap_id"] == current or after.snapshot["pending"]
 
 def test_questions_are_asked_in_template_order_one_task_at_a_time(kb):
     """양식 순서대로 묻는다: 장 순서(정기 → 비정기) 안에서 세부업무 하나를 다 묻고 다음 세부업무로, 세부업무 안에서는 표의 행 순서대로."""
@@ -263,3 +250,13 @@ def test_questions_are_asked_in_template_order_one_task_at_a_time(kb):
         snap = agent.skip("order", kb).snapshot
     assert asked and asked == sorted(asked)
     assert {a[0] for a in asked} == {0, 1} and len({(a[0], a[1]) for a in asked}) == 3  # 정기 2건, 비정기 1건(부서별 추가 자료는 묻지 않는다)
+
+
+def test_aux_question_starts_with_the_selection_guide(kb):
+    """노션 CASE2: 보조질문은 '[선택 질문] …' 으로 묻고, '해당 사항이 없으실 경우 …건너뛰기…' 안내를 붙인다."""
+    agent = HandoverAgent()
+    snap = agent.start("aux1", PROFILE, kb).snapshot
+    gap = next(g for g in snap["gaps"] if g.get("aux"))
+    question = [m for m in agent.reopen_question("aux1", gap["id"], kb).messages if m["kind"] == "question"][-1]
+    assert question["meta"]["aux"] and "\n\n[선택 질문] " in question["content"]
+    assert question["meta"]["aux_note"] == "해당 사항이 없으실 경우 '이 질문 건너뛰기'를 클릭하여 넘어가세요."

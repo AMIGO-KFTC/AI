@@ -77,7 +77,8 @@ logger = logging.getLogger(__name__)
 QUICK_REPLIES_QNA = ["모르겠어요 (건너뛰기)", "지금 문서 생성"]
 QUICK_REPLIES_CONFIRM = ["네, 맞아요", "수정할게요"]
 QUICK_REPLIES_YESNO = ["예", "아니요"]  # 예/아니요로 먼저 묻는 질문의 두 가지 선택지
-AUX_NOTE = "해당 사항이 없으실 경우 '이 질문 건너뛰기'를 클릭하여 넘어가세요."  # 보조질문 안내(화면은 질문 왼편에 '보조질문' 태그를 붙인다)
+AUX_PREFIX = "[선택 질문]"
+AUX_NOTE = "해당 사항이 없으실 경우 '이 질문 건너뛰기'를 클릭하여 넘어가세요."  # 보조질문(선택 질문) 안내. 질문 앞에는 '[선택 질문]'을 붙인다(노션 CASE2 가이드 문장)
 MAX_CONFIRM_ROUNDS = 2  # 정리한 내용과 한 번 고친 내용까지 확인을 묻고, 그다음 고침은 바로 반영
 # 정리한 내용이 맞는지 물었을 때 이렇게만 답하면 LLM 에 묻지 않고 바로 확정한다(빠른 답변 단추 포함).
 PLAIN_CONFIRMS = frozenset({"네", "네.", "네!", "예", "예.", "응", "넵", "넹", "맞아요", "맞아요.", "맞습니다", "맞습니다.", "네, 맞아요", "네 맞아요", "네, 맞아요.", "네 맞습니다", "네, 맞습니다", "그렇습니다", "확인", "확인했어요", "ok", "okay", "yes"})
@@ -622,7 +623,10 @@ def ask(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     # 직전 질문의 처리 결과('…은(는) '해당 없음'으로 기록했어요', 건너뜀 안내)는 다음 질문에 붙이지 않고 따로 보낸다(화면에서는 직전 질문의 대화에 남는다).
     # 장 이름은 메시지 meta 의 slot 으로 화면 태그에 표시되므로 본문 앞에 붙이지 않는다
     lead = ack if state.get("last_intent") == "reopen" else ""  # 고른 질문으로 이동했다는 안내는 그 질문 앞에 붙인다
-    content = (lead + "\n\n" if lead else "") + gap["question"]
+    asked = gap["question"]
+    if gap.get("aux") and not asked.startswith(AUX_PREFIX):
+        asked = f"{AUX_PREFIX} {asked}"  # [선택 질문] AI 업무에서 …하시나요?
+    content = (lead + "\n\n" if lead else "") + asked
     if gap.get("ask_for_document"):
         content += "\n\n📎 관련 자료(계약서·매뉴얼 등)가 있다면 파일로 올려 주셔도 됩니다."
     for g in gaps:
@@ -636,6 +640,7 @@ def ask(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
         meta.update(picker="period", choices=list(PERIOD_CHOICES), allow_files=False)
     if gap.get("aux"):
         meta.update(aux=True, aux_note=AUX_NOTE)
+
     acked = [_say("info", ack)] if ack and not lead else []  # 직전 질문의 처리 결과를 질문보다 먼저 보낸다
     question = _say(
         "question",
@@ -655,8 +660,18 @@ def wait_user(state: AgentState) -> dict[str, Any]:
     return {"event": event if isinstance(event, dict) else {"type": "message", "text": str(event)}}
 
 
+def _attachment_answers_current(state: AgentState) -> bool:
+    """질의응답 중 지금 묻고 있는 질문이 있으면, 그때 올린 자료는 그 질문의 답으로 본다(전체 재분석 없이 답변 해석 한 번)."""
+    if state.get("stage") != "qna" or state.get("pending"):
+        return False
+    current = next((g for g in state.get("gaps") or [] if g["id"] == state.get("current_gap_id")), None)
+    return bool(current and current.get("status") == "asked")
+
+
 def route_event(state: AgentState) -> Literal["interpret", "skip_gap", "reanalyze", "request_finish"]:
     kind = (state.get("event") or {}).get("type")
+    if kind == "files" and _attachment_answers_current(state):
+        return "interpret"
     return {"skip": "skip_gap", "files": "reanalyze", "finish": "request_finish"}.get(kind, "interpret")
 
 
@@ -714,9 +729,28 @@ MOVING_ON_RE = re.compile(r"넘어가|다음 질문|건너뛰|건너뛸")
 REASK_HINT = "답하기 어려우시면 '모르겠어요'라고 하시거나 건너뛰기를 눌러 주세요."
 
 
+ATTACH_TEXT_LIMIT = 6000  # 첨부 자료를 답으로 해석할 때 모델에 넘기는 본문 길이 상한
+
+
+def _attachment_text(ctx: AgentContext, names: list[str]) -> str:
+    """질의응답 중 올린 자료의 본문(지식베이스 조각)을 답변 글로 만든다. '[첨부 자료: 이름]' 머리 아래 본문을 잇는다."""
+    wanted = set(names)
+    try:
+        chunks = [c for c in ctx.kb.get_chunks() if str((c.metadata or {}).get("source_name", "")) in wanted]
+    except Exception as exc:  # 지식베이스를 읽지 못하면 파일 이름만으로 해석한다
+        logger.warning("attachment text unavailable: %s", exc)
+        chunks = []
+    body = "\n".join(c.text for c in chunks)[:ATTACH_TEXT_LIMIT]
+    return f"[첨부 자료: {', '.join(names)}]\n{body}".strip()
+
+
 def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     ctx = runtime.context
-    raw_text = str((state.get("event") or {}).get("text", "")).strip()
+    event = state.get("event") or {}
+    if event.get("type") == "files":  # 지금 질문의 답으로 올린 자료(route_event): 본문을 답으로 해석한다
+        raw_text = _attachment_text(ctx, [str(n) for n in event.get("names", [])])
+    else:
+        raw_text = str(event.get("text", "")).strip()
     # 비밀번호는 AI·지식베이스에 남기지 않는다(보안 서약). 값은 가리고, 출력본에 수기로 적도록 안내한다.
     text, redacted = scrub_credentials(raw_text)
     user_turn = turn("user", "answer", text)
