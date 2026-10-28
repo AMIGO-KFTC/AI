@@ -14,7 +14,7 @@ import re
 from datetime import date
 from typing import Any
 
-from .periods import MAX_SPAN_MONTHS, plan_span, ym_from_index, ym_index
+from .periods import plan_span
 from .relevance import bigrams
 from .state import Gap, SlotState, item_label, normalize_title
 from .dept_info import clean_dept_info
@@ -169,22 +169,25 @@ def _base_year(profile: dict[str, Any], today: date) -> int:
     return int(found.group(1)) if found else today.year
 
 
+def _clamp_span(span: set[tuple[int, int]], base_year: int) -> set[tuple[int, int]]:
+    """일정표에 그리는 해는 올해(base_year)의 전년·올해·다음 해 3년뿐이다. 그 밖(2024년 이하, 2028년 이상)은 버린다."""
+    return {(y, m) for y, m in span if base_year - 1 <= y <= base_year + 1}
+
+
 def _gantt_window(rows: list[tuple[set[tuple[int, int]], bool]], base_year: int) -> list[tuple[int, int]] | None:
-    """해를 넘기는 표면 그릴 (연도, 월) 칸 목록(가장 이른 달부터 12칸 이상, 최대 MAX_SPAN_MONTHS 칸). 모두 한 해 안이면 None(1~12월 표)."""
-    spans = set().union(*(span for span, _ in rows)) if rows else set()
-    if len({y for y, _ in spans}) <= 1:
+    """올해(base_year) 안에서만 끝나는 표는 None(1~12월 월별 표). 전년·다음 해에 걸치면(2~3년) 분기별로 그릴 (연도, 분기) 칸 목록."""
+    spans = set().union(*(_clamp_span(span, base_year) for span, _ in rows)) if rows else set()
+    years = {y for y, _ in spans}
+    if not years or years == {base_year}:
         return None
-    start = min(ym_index(ym) for ym in spans)
-    end = max(max(ym_index(ym) for ym in spans), start + 11)
-    end = min(end, start + MAX_SPAN_MONTHS - 1)
-    return [ym_from_index(i) for i in range(start, end + 1)]
+    return [(y, q) for y in range(min(years), max(years) + 1) for q in range(1, 5)]
 
 
 def _render_gantt(out: list[str], spec, items: list[dict], base_year: int) -> None:
-    """업무 단위 요약 + 일정 명세표: 계획기간을 월 열로 펼치고, 걸치는 달에 이어진 막대를 그린다(근거 열 없음).
+    """업무 단위 요약 + 일정 명세표: 계획기간을 막대로 그린다(근거 열 없음).
 
-    보통은 머리글 2행('단위업무명 | 계획기간(12칸 병합) | 진행상황 요약' + '1월 … 12월')의 1~12월 표다.
-    어느 행이든 해를 넘기면(예: 2026.12~2027.01) 가장 이른 달부터 이어지는 달 칸을 쓰고, 그 사이에 연도 행('2026년 | 2027년')을 넣어 머리글이 3행이 된다.
+    올해 안이면 머리글 2행('단위업무명 | 계획기간(12칸 병합) | 비고' + '1월 … 12월')의 월별 표다.
+    전년·다음 해에 걸치면(2~3년) 너무 빽빽하지 않게 분기별 표(연도 행 + '1분기 … 4분기')로 그리고, 올해 -1년 ~ +1년 밖의 해는 버린다.
     """
     rows = []
     for item in items:
@@ -209,18 +212,19 @@ def _render_gantt(out: list[str], spec, items: list[dict], base_year: int) -> No
         out += [
             "<table>",
             f'<tr><th rowspan="3">{name_head}</th><th colspan="{len(window)}">{period_head}</th><th rowspan="3">{note_head}</th></tr>',
-            "<tr>" + "".join(f'<th colspan="{n}">{y}년</th>' if n > 1 else f"<th>{y}년</th>" for y, n in years) + "</tr>",
-            "<tr>" + "".join(f"<th>{m}월</th>" for _, m in window) + "</tr>",
+            "<tr>" + "".join(f'<th colspan="{n}">{y}년</th>' for y, n in years) + "</tr>",
+            "<tr>" + "".join(f"<th>{q}분기</th>" for _, q in window) + "</tr>",
         ]
     for fields, (span, always) in rows:
         if window is None:
-            months = {m for _, m in span}
+            months = {m for y, m in _clamp_span(span, base_year)} if span else set()
             filled = [always or m in months for m in range(1, 13)]
         else:
-            filled = [always or ym in span for ym in window]
+            quarters = {(y, (m - 1) // 3 + 1) for y, m in _clamp_span(span, base_year)}
+            filled = [always or cell in quarters for cell in window]
         note = str(fields.get("note") or "").strip()
         period = str(fields.get("period") or "").strip()
-        if period and not any(filled):  # 월로 읽을 수 없는 계획기간은 원문을 마지막 열(진행상황 요약)에 남긴다
+        if period and not any(filled):  # 읽을 수 없거나 그리는 해 밖의 계획기간은 원문을 마지막 열(비고)에 남긴다
             note = f"계획기간: {period}" + (f" · {note}" if note else "")
         out.append(f"<tr><td>{_h(fields.get(spec.title_field), br=False)}</td>{_gantt_cells(filled)}<td>{_h(note, br=False)}</td></tr>")
     out += ["</table>", ""]
