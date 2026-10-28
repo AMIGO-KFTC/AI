@@ -45,7 +45,8 @@ def test_render_marks_citations_next_to_the_text_and_leaves_out_pending_and_evid
     assert "| GA [1] | - | - | - | ID: ________ / PW: ________ |" in md
     # 양식에 없는 장(확인 필요 사항·근거 자료)과 근거 열은 문서에 싣지 않는다(화면의 오른쪽 패널·번호 팝업에서 본다)
     assert "확인 필요 사항" not in md and "근거 자료" not in md and "| 근거 |" not in md and "GA 신청 방법 없음" not in md
-    assert "## 1. 업무 단위 요약 + 일정 명세표\n\n확인된 내용이 없습니다." in md
+    # 일정 명세표 위에는 화면에서만 보이는 회색 작성 안내(doc-guide)가 붙는다
+    assert '## 1. 업무 단위 요약 + 일정 명세표\n\n<span class="doc-guide">실제 업무 추진 현황 및 예상일정을 막대 그래프로 나타내주세요</span>\n\n확인된 내용이 없습니다.' in md
 
 
 def test_unit_summary_draws_connected_bars_without_evidence_column():
@@ -166,7 +167,8 @@ def test_leave_version_follows_template_a_b_c():
 def test_system_access_is_left_blank_for_handwriting_when_missing():
     md = render(empty_slots())
     part = md.split("## 4. 기타 자료")[1]
-    assert part.startswith("\n\n### 시스템 접근 권한\n\n| 시스템 |") and "AMIGO에게 요청" not in part
+    guide = '<span class="doc-guide">시스템 접근 권한이 있을 경우 해당 내용을 작성해주세요.</span>'  # 화면에서만 보이는 회색 안내
+    assert part.startswith(f"\n\n### 시스템 접근 권한\n\n{guide}\n\n| 시스템 |") and "AMIGO에게 요청" not in part
     assert "| - | - | - | - | - |" in part and "### 부서별 추가 자료" in part
 
 

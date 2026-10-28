@@ -119,3 +119,15 @@ def test_team_prompt_reaches_both_prompts_and_is_limited():
     assert "판단 기준: 담당자 연락처" in chat
     assert len(clean_team_guidelines({"prompt": "가" * (MAX_TEAM_PROMPT + 10)})["prompt"]) == MAX_TEAM_PROMPT
     assert clean_team_guidelines(None)["prompt"] == ""
+
+
+def test_intro_and_glossary_reach_the_prompt():
+    """AI 팀 맞춤 설정 STEP1 팀 소개 · STEP2 업무 용어집은 프롬프트에 들어가고, 비어 있으면 아무것도 붙지 않는다."""
+    data = clean_team_guidelines(
+        {"intro": "  운영기획팀은 결제망 운영을 담당합니다.  ", "glossary": [{"term": " 개설기관 ", "meaning": "계좌를 개설해 주는 기관"}, {"term": "", "meaning": "버려짐"}, {"term": "대표앱"}, "문자열은 무시"]}
+    )
+    assert data["intro"] == "운영기획팀은 결제망 운영을 담당합니다."
+    assert data["glossary"] == [{"term": "개설기관", "meaning": "계좌를 개설해 주는 기관"}, {"term": "대표앱", "meaning": ""}]
+    block = team_guidelines_block(data)
+    assert "### 팀 소개" in block and "- 개설기관: 계좌를 개설해 주는 기관" in block and "- 대표앱\n" in block + "\n"
+    assert team_guidelines_block({"intro": "", "glossary": []}) == ""

@@ -244,7 +244,7 @@ def _render_slot(out: list[str], spec: SlotSpec, slots: dict[str, SlotState], ac
     items = (slots.get(spec.key) or {}).get("items") or []
     children = [(c, (slots.get(c.key) or {}).get("items") or []) for c in active if c.embed_into == spec.key]
     if spec.muted_note:
-        out += [f"> {spec.muted_note}", ""]
+        out += [f'<span class="doc-guide">{html.escape(spec.muted_note)}</span>', ""]
     if spec.layout == "table" and (items or spec.handwritten):  # 시스템 접근 권한은 비어 있어도 직접 적을 수 있게 빈 표를 둔다
         _render_table(out, spec, items, cites)
         return

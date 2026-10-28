@@ -123,7 +123,8 @@ def test_units_from_the_giver_become_items():
 
 def test_system_access_slot_is_shared_and_keeps_passwords_blank():
     spec = SLOT_BY_KEY["systems"]
-    assert spec.title == "시스템 접근 권한" and spec.leave and spec.handwritten and not spec.muted_note
+    assert spec.title == "시스템 접근 권한" and spec.leave and spec.handwritten
+    assert spec.muted_note == "시스템 접근 권한이 있을 경우 해당 내용을 작성해주세요."  # 화면 전용 회색 안내(내려받는 문서에서는 빠진다)
 
 
 def test_leave_version_runs_end_to_end_with_only_its_chapters():
