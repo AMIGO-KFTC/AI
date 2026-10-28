@@ -25,7 +25,6 @@ def test_analysis_prompt_carries_the_criteria_and_ask_type_of_each_field():
     assert "작성 예시: 1. 실적자료 요청 및 취합:" in block  # 수행 절차는 단계 번호 + 세부 설명 형식
     assert "이 장 전체의 작성 기준:" in slot_spec_block(SLOT_BY_KEY["partners"])  # 카드 안 표는 장 전체 기준
     assert "gaps 는 만들지 않습니다" in slot_spec_block(SLOT_BY_KEY["partners"])
-    assert "질의응답으로만 채움" in slot_spec_block(SLOT_BY_KEY["leave_tasks"])
     assert "작성 기준" in ANALYSIS_SYSTEM and "1질문 1암묵지" in ANALYSIS_SYSTEM and "구체적 질문 예시(없으면 보완 질문 예시) 문장 그대로" in ANALYSIS_SYSTEM
 
 

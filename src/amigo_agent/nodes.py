@@ -335,6 +335,8 @@ def _field_question(spec: Any, item: dict[str, Any], key: str) -> dict[str, Any]
     노션 양식의 구체적 질문 예시(첫 필수 세부사항을 묻는 문장)가 있으면 그 문장으로, 없으면 보완 질문 예시 문장 그대로 묻는다(first_ask_example)."""
     name = item_label(spec, item)
     label = spec.label(key)
+    if label == "기타":  # '기타' 칸(참고자료·법령·매뉴얼 등)은 질문에서 '참고자료'로 부른다
+        label = "참고자료"
     field = spec.field(key)
     example = first_ask_example(spec.key, key)
     question = f"'{name}'의 {label}에 대해 여쭤볼게요.\n{example}" if example else f"'{name}'의 {label}{_object_particle(label)} 알려 주시겠어요?"
@@ -1147,7 +1149,7 @@ def auto_targets(profile: dict[str, Any], slots: dict[str, Any]) -> list[dict[st
             fields = item.get("fields") or {}
             for key in spec.auto:
                 if (spec.field(key) or FieldSpec("", "")).placeholder:
-                    continue  # 안내만 보여 주고 인계자가 직접 적는 칸(정기업무 기타(참고자료 등))은 지어 채우지 않는다
+                    continue  # 안내만 보여 주고 인계자가 직접 적는 칸(정기업무 기타)은 지어 채우지 않는다
                 meta = (item.get("field_meta") or {}).get(key) or {}
                 refresh = spec.key == "overview" and key == "note" and meta.get("rank") != RANK_USER
                 if (str(fields.get(key) or "").strip() and not refresh) or (spec.embed_into and key != "note"):

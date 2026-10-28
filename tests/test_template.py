@@ -39,7 +39,7 @@ def test_each_field_has_the_ask_type_of_the_notion_checklist():
     assert regular.field("key_points").gate and regular.field("decisions").gate
     assert regular.field("future").ask == ASK_AUX and regular.field("future").gate
     assert regular.field("references").ask == ASK_AUTO and regular.field("references").placeholder  # 묻지 않고 문서에 흐린 안내(노션 표)
-    assert regular.field("references").label == "기타(참고자료 등)"
+    assert regular.field("references").label == "기타"
     # 협업관계: 유의사항만 묻는다(나머지 칸은 자료로)
     for key in ("partners", "stakeholders"):
         spec = SLOT_BY_KEY[key]
@@ -58,7 +58,7 @@ def test_each_field_has_the_ask_type_of_the_notion_checklist():
     leave = SLOT_BY_KEY["leave_tasks"]
     assert leave.field("task_type").ask == ASK_HIDDEN  # 장기휴가는 정기/비정기로 나누지 않아 문서에 싣지 않는다
     assert leave.ask_of("status", {"task_type": "비정기"}) == ASK_AUX and leave.ask_of("status", {}) == ASK_AUX
-    assert leave.field("cautions").ask == ASK_AUX and leave.field("references").answers_only
+    assert leave.field("cautions").ask == ASK_AUX and not leave.field("references").answers_only  # 기타: 자료에서도 양식대로 채운다
     # 장기휴가 B 주요 연락망: 보조질문(비어 있을 때만)
     assert SLOT_BY_KEY["contacts"].empty_ask == ASK_AUX
 
@@ -70,7 +70,7 @@ def test_unit_summary_table_columns():
 
 def test_regular_task_items_match_the_template_questions():
     assert labels("regular")[1:] == [
-        "업무 개요", "수행 시기", "수행 절차", "중점 관리사항", "주요 의사결정 및 판단 근거", "향후 과제 및 발전 방향", "기타(참고자료 등)",
+        "업무 개요", "수행 시기", "수행 절차", "중점 관리사항", "주요 의사결정 및 판단 근거", "향후 과제 및 발전 방향", "기타",
     ]  # '주요 협업관계'는 표(별도 슬롯 partners)로 의사결정 다음 자리에 들어간다. 단위업무명은 내부 값
     assert asks("regular")["unit"] == ASK_HIDDEN
     partners = SLOT_BY_KEY["partners"]
@@ -93,7 +93,7 @@ def test_irregular_project_items_match_the_template_and_tables():
 
 
 def test_leave_detail_items_match_the_template():
-    assert labels("leave_tasks")[1:] == ["주요 일정 및 처리사항", "현재 진행 상태", "업무 처리방법", "주의사항 및 후속조치", "참고자료"]
+    assert labels("leave_tasks")[1:] == ["주요 일정 및 처리사항", "현재 진행 상태", "업무 처리방법", "주의사항 및 후속조치", "기타"]
     assert SLOT_BY_KEY["leave_tasks"].field("schedule").hint == "부재 기간 중 언제, 무엇을 처리해야 하는가?"  # 템플릿의 핵심 질문
 
 
