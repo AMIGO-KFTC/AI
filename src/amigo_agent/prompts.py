@@ -131,12 +131,16 @@ MAX_TEAM_ITEM_NAME = 100
 MAX_TEAM_ITEM_INSTRUCTION = 500
 MAX_TEAM_NOTES = 2000
 MAX_TEAM_PROMPT = 2000  # 팀 전용 프롬프트(AI 가 항상 따라야 하는 역할과 판단 기준)
+MAX_TEAM_INTRO = 300  # 팀 소개(3줄 이내)
+MAX_TEAM_TERMS = 50  # 업무 용어집 용어 수
+MAX_TEAM_TERM = 60
+MAX_TEAM_TERM_MEANING = 300
 
 
 def clean_team_guidelines(guidelines: dict[str, Any] | None) -> dict[str, Any]:
     """팀 지침(profile["team_guidelines"])을 정리한다: 이름이 없는 항목·빈 값을 버리고 길이를 자른다."""
     if not isinstance(guidelines, dict):
-        return {"items": [], "notes": "", "prompt": ""}
+        return {"items": [], "notes": "", "prompt": "", "intro": "", "glossary": []}
     items: list[dict[str, Any]] = []
     for raw in guidelines.get("items") or []:
         if not isinstance(raw, dict):
@@ -148,7 +152,16 @@ def clean_team_guidelines(guidelines: dict[str, Any] | None) -> dict[str, Any]:
         items.append({"name": name, "instruction": instruction})
     notes = str(guidelines.get("notes") or "").strip()[:MAX_TEAM_NOTES]
     prompt = str(guidelines.get("prompt") or "").strip()[:MAX_TEAM_PROMPT]
-    return {"items": items[:MAX_TEAM_ITEMS], "notes": notes, "prompt": prompt}
+    intro = str(guidelines.get("intro") or "").strip()[:MAX_TEAM_INTRO]
+    glossary: list[dict[str, str]] = []
+    for raw in guidelines.get("glossary") or []:
+        if not isinstance(raw, dict):
+            continue
+        term = " ".join(str(raw.get("term") or "").split())[:MAX_TEAM_TERM]
+        if not term:
+            continue
+        glossary.append({"term": term, "meaning": " ".join(str(raw.get("meaning") or "").split())[:MAX_TEAM_TERM_MEANING]})
+    return {"items": items[:MAX_TEAM_ITEMS], "notes": notes, "prompt": prompt, "intro": intro, "glossary": glossary[:MAX_TEAM_TERMS]}
 
 
 def team_prompt_block(guidelines: dict[str, Any] | None) -> str:
@@ -171,13 +184,23 @@ def team_guidelines_block(guidelines: dict[str, Any] | None, *, slot_key: str = 
     지침은 '무엇을 찾아 담을지'를 정할 뿐 사실의 근거가 아니다. 근거·민감 정보 원칙은 지침으로 바뀌지 않음을 블록 안에서 밝힌다.
     """
     data = clean_team_guidelines(guidelines)
-    if not data["items"] and not data["notes"] and not data["prompt"]:
+    if not data["items"] and not data["notes"] and not data["prompt"] and not data["intro"] and not data["glossary"]:
         return ""
     lines = [
         "## 우리 팀 인수인계서 지침 (팀 관리자가 정한 내용)",
         "이 지침은 무엇을 찾아 담고 어떻게 쓸지 정하는 것입니다. 사실의 근거가 아니므로, 항목의 내용은 여전히 근거 자료와 인계자 답변에서만 가져옵니다. "
         "근거 ID 를 붙이는 원칙과 시스템 ID·비밀번호 같은 민감 정보를 다루지 않는 원칙은 이 지침으로 바뀌지 않습니다.",
     ]
+    if data["intro"]:
+        lines.append("")
+        lines.append("### 팀 소개 (이 팀이 하는 일)")
+        lines.append(data["intro"])
+    if data["glossary"]:
+        lines.append("")
+        lines.append("### 업무 용어집 (우리 팀에서 쓰는 용어와 뜻)")
+        for entry in data["glossary"]:
+            lines.append(f"- {entry['term']}: {entry['meaning']}" if entry["meaning"] else f"- {entry['term']}")
+        lines.append("자료와 인계자 답변에 위 용어가 나오면 이 뜻으로 이해하고, 문서에서도 같은 용어를 씁니다. 용어집은 뜻풀이일 뿐 사실의 근거가 아닙니다.")
     if data["prompt"]:
         lines.append("")
         lines.append("### 팀 전용 프롬프트 (팀 관리자가 정한 역할과 판단 기준)")
@@ -209,7 +232,7 @@ def team_guidelines_block(guidelines: dict[str, Any] | None, *, slot_key: str = 
             )
     if data["notes"]:
         lines.append("")
-        lines.append("### 우리 팀의 특징·작성 지침")
+        lines.append("### 기타 중요 포인트 (우리 팀의 특징·작성 지침)")
         lines.append(data["notes"])
     return "\n".join(lines)
 
