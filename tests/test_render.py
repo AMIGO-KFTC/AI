@@ -53,7 +53,7 @@ def test_unit_summary_draws_connected_bars_without_evidence_column():
     slots = empty_slots()
     slots["overview"]["items"] = [
         {"id": "o1", "title": "공동망 운영", "fields": {"name": "공동망 운영", "period": "3월~5월", "note": "상시 점검"}, "citations": [CITE]},
-        {"id": "o2", "title": "40년사 발간 추진", "fields": {"name": "40년사 발간 추진", "period": "2026.10 ~ 2027.01"}, "citations": [CITE]},
+        {"id": "o2", "title": "40년사 발간 추진", "fields": {"name": "40년사 발간 추진", "period": "2026.10 ~ 2026.12"}, "citations": [CITE]},
         {"id": "o3", "title": "통계시스템", "fields": {"name": "통계시스템", "period": "미정"}, "citations": [CITE]},
         {"id": "o4", "title": "정기 점검", "fields": {"name": "정기 점검", "period": "1·4·7·10월"}, "citations": [CITE]},
     ]
@@ -72,7 +72,7 @@ def test_unit_summary_draws_connected_bars_without_evidence_column():
         return out
 
     assert bars("공동망 운영") == [(3, 3)]  # 3·4·5월이 끊김 없이 한 막대
-    assert bars("40년사 발간 추진") == [(1, 1), (10, 3)]  # 10~12월은 한 막대, 해를 넘긴 1월은 따로
+    assert bars("40년사 발간 추진") == [(10, 3)]  # 10~12월은 한 막대(해를 넘기는 표는 test_periods 에서 본다)
     assert bars("통계시스템") == [] and rows["통계시스템"][-1]["text"] == "계획기간: 미정"  # 월로 읽을 수 없으면 원문을 마지막 열(진행상황 요약)에
     assert bars("정기 점검") == [(1, 1), (4, 1), (7, 1), (10, 1)]  # 떨어진 달은 이어 붙이지 않는다
     assert all(sum(c["colspan"] for c in r) == 14 for r in table[2:]) and sum(c["colspan"] for c in table[0]) == 14  # 어느 행이든 14칸(이름·12개월·진행상황 요약)

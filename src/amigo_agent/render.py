@@ -14,7 +14,7 @@ import re
 from datetime import date
 from typing import Any
 
-from .periods import plan_months
+from .periods import MAX_SPAN_MONTHS, plan_span, ym_from_index, ym_index
 from .relevance import bigrams
 from .state import Gap, SlotState, item_label, normalize_title
 from .template import MODE_LABELS, OFFICE_FIRST_TITLE, OFFICE_SLOT, is_office, PARTNER_SCOPES, SLOT_BY_KEY, FieldSpec, SlotSpec, leave_period, mode_of, profile_units, slots_for
@@ -51,8 +51,13 @@ def _clean(value: Any) -> str:
     return EVIDENCE_ID_RE.sub("", str(value or "")).strip()
 
 
+def _tilde(text: str) -> str:
+    """마크다운 글의 물결표를 이스케이프한다. '12월~1월, 11월~2월'처럼 ~ 가 두 번 나오면 화면(GFM)이 그 사이를 취소선으로 그린다."""
+    return re.sub(r"(?<!\\)~", r"\~", text)
+
+
 def _cell(value: Any) -> str:
-    text = _clean(value)
+    text = _tilde(_clean(value))
     return text.replace("|", "\\|").replace("\r", "").replace("\n", " / ") or "-"
 
 
@@ -103,43 +108,83 @@ def _render_table(out: list[str], spec, items: list[dict], cites: _Citations) ->
         _md_table(out, [f.label for f in columns] + list(spec.handwritten), cells)
 
 
-def _gantt_cells(months: set[int]) -> str:
-    """1~12월 칸. 이어지는 달은 한 칸으로 합쳐(colspan) 막대가 끊기지 않게 그린다."""
+def _gantt_cells(filled: list[bool]) -> str:
+    """일정표의 달 칸. 이어지는 달은 한 칸으로 합쳐(colspan) 막대가 끊기지 않게 그린다."""
     cells: list[str] = []
-    month = 1
-    while month <= 12:
-        filled = month in months
-        end = month
-        while end + 1 <= 12 and ((end + 1) in months) == filled:
+    i = 0
+    while i < len(filled):
+        end = i
+        while end + 1 < len(filled) and filled[end + 1] == filled[i]:
             end += 1
-        run = end - month + 1
-        if filled:
+        run = end - i + 1
+        if filled[i]:
             cells.append(f'<td class="bar" bgcolor="{BAR_COLOR}"' + (f' colspan="{run}"' if run > 1 else "") + ">&nbsp;</td>")
         else:
             cells.extend("<td></td>" for _ in range(run))
-        month = end + 1
+        i = end + 1
     return "".join(cells)
 
 
-def _render_gantt(out: list[str], spec, items: list[dict]) -> None:
-    """업무 단위 요약 + 일정 명세표: 계획기간을 1~12월 열로 펼치고, 걸치는 달에 이어진 막대를 그린다(근거 열 없음).
+def _base_year(profile: dict[str, Any], today: date) -> int:
+    """연도 없이 적힌 계획기간('3월~12월')을 어느 해로 볼지: 인계 일자의 해, 없으면 올해."""
+    found = re.search(r"(?<!\d)(20\d{2})(?!\d)", str(profile.get("handover_date") or ""))
+    return int(found.group(1)) if found else today.year
 
-    머리글은 2행이다: 1행 '단위업무명 | 계획기간(12칸 병합) | 진행상황 요약', 2행 '1월 … 12월'.
+
+def _gantt_window(rows: list[tuple[set[tuple[int, int]], bool]], base_year: int) -> list[tuple[int, int]] | None:
+    """해를 넘기는 표면 그릴 (연도, 월) 칸 목록(가장 이른 달부터 12칸 이상, 최대 MAX_SPAN_MONTHS 칸). 모두 한 해 안이면 None(1~12월 표)."""
+    spans = set().union(*(span for span, _ in rows)) if rows else set()
+    if len({y for y, _ in spans}) <= 1:
+        return None
+    start = min(ym_index(ym) for ym in spans)
+    end = max(max(ym_index(ym) for ym in spans), start + 11)
+    end = min(end, start + MAX_SPAN_MONTHS - 1)
+    return [ym_from_index(i) for i in range(start, end + 1)]
+
+
+def _render_gantt(out: list[str], spec, items: list[dict], base_year: int) -> None:
+    """업무 단위 요약 + 일정 명세표: 계획기간을 월 열로 펼치고, 걸치는 달에 이어진 막대를 그린다(근거 열 없음).
+
+    보통은 머리글 2행('단위업무명 | 계획기간(12칸 병합) | 진행상황 요약' + '1월 … 12월')의 1~12월 표다.
+    어느 행이든 해를 넘기면(예: 2026.12~2027.01) 가장 이른 달부터 이어지는 달 칸을 쓰고, 그 사이에 연도 행('2026년 | 2027년')을 넣어 머리글이 3행이 된다.
     """
-    out += [
-        "<table>",
-        f'<tr><th rowspan="2">{_h(spec.label(spec.title_field))}</th><th colspan="12">{_h(spec.label("period"))}</th><th rowspan="2">{_h(spec.label("note"))}</th></tr>',
-        "<tr>" + "".join(f"<th>{month}월</th>" for month in range(1, 13)) + "</tr>",
-    ]
+    rows = []
     for item in items:
         fields = dict(item.get("fields") or {})
         fields.setdefault(spec.title_field, item_label(spec, item))
-        months = set(plan_months(fields.get("period")))
+        rows.append((fields, plan_span(fields.get("period"), base_year)))
+    window = _gantt_window([span for _, span in rows], base_year)
+    name_head, period_head, note_head = _h(spec.label(spec.title_field)), _h(spec.label("period")), _h(spec.label("note"))
+    if window is None:
+        out += [
+            "<table>",
+            f'<tr><th rowspan="2">{name_head}</th><th colspan="12">{period_head}</th><th rowspan="2">{note_head}</th></tr>',
+            "<tr>" + "".join(f"<th>{month}월</th>" for month in range(1, 13)) + "</tr>",
+        ]
+    else:
+        years: list[list[int]] = []
+        for y, _ in window:
+            if years and years[-1][0] == y:
+                years[-1][1] += 1
+            else:
+                years.append([y, 1])
+        out += [
+            "<table>",
+            f'<tr><th rowspan="3">{name_head}</th><th colspan="{len(window)}">{period_head}</th><th rowspan="3">{note_head}</th></tr>',
+            "<tr>" + "".join(f'<th colspan="{n}">{y}년</th>' if n > 1 else f"<th>{y}년</th>" for y, n in years) + "</tr>",
+            "<tr>" + "".join(f"<th>{m}월</th>" for _, m in window) + "</tr>",
+        ]
+    for fields, (span, always) in rows:
+        if window is None:
+            months = {m for _, m in span}
+            filled = [always or m in months for m in range(1, 13)]
+        else:
+            filled = [always or ym in span for ym in window]
         note = str(fields.get("note") or "").strip()
         period = str(fields.get("period") or "").strip()
-        if period and not months:  # 월로 읽을 수 없는 계획기간은 원문을 마지막 열(진행상황 요약)에 남긴다
+        if period and not any(filled):  # 월로 읽을 수 없는 계획기간은 원문을 마지막 열(진행상황 요약)에 남긴다
             note = f"계획기간: {period}" + (f" · {note}" if note else "")
-        out.append(f"<tr><td>{_h(fields.get(spec.title_field))}</td>{_gantt_cells(months)}<td>{_h(note)}</td></tr>")
+        out.append(f"<tr><td>{_h(fields.get(spec.title_field))}</td>{_gantt_cells(filled)}<td>{_h(note)}</td></tr>")
     out += ["</table>", ""]
 
 
@@ -240,7 +285,7 @@ def unlinked_children(slots: dict[str, SlotState], active: list[SlotSpec]) -> li
     return out
 
 
-def _render_slot(out: list[str], spec: SlotSpec, slots: dict[str, SlotState], active: tuple[SlotSpec, ...], cites: _Citations) -> None:
+def _render_slot(out: list[str], spec: SlotSpec, slots: dict[str, SlotState], active: tuple[SlotSpec, ...], cites: _Citations, base_year: int) -> None:
     items = (slots.get(spec.key) or {}).get("items") or []
     children = [(c, (slots.get(c.key) or {}).get("items") or []) for c in active if c.embed_into == spec.key]
     if spec.muted_note:
@@ -252,17 +297,17 @@ def _render_slot(out: list[str], spec: SlotSpec, slots: dict[str, SlotState], ac
         out += ["확인된 내용이 없습니다.", ""]
         return
     if spec.layout == "gantt":
-        _render_gantt(out, spec, items)
+        _render_gantt(out, spec, items, base_year)
     elif spec.layout == "card":
         _render_cards(out, spec, items, cites, children)
     else:
         _render_table(out, spec, items, cites)
 
 
-def _render_office(out: list[str], slots: dict[str, SlotState], active: tuple[SlotSpec, ...], cites: _Citations) -> None:
+def _render_office(out: list[str], slots: dict[str, SlotState], active: tuple[SlotSpec, ...], cites: _Citations, base_year: int) -> None:
     """원내 양식: '## 1. 주요 사업계획 및 집행상황표'(월별 일정표) 뒤에 목록마다 '## 번호. 목록' 과 □ 개괄식 문장. 비고는 AI 참고사항이라 싣지 않는다."""
     out += [f"## {OFFICE_FIRST_TITLE}", ""]
-    _render_slot(out, SLOT_BY_KEY["overview"], slots, active, cites)
+    _render_slot(out, SLOT_BY_KEY["overview"], slots, active, cites, base_year)
     for number, item in enumerate((slots.get(OFFICE_SLOT.key) or {}).get("items") or [], start=2):
         fields = dict(item.get("fields") or {})
         fields.setdefault("name", item_label(OFFICE_SLOT, item))
@@ -272,7 +317,7 @@ def _render_office(out: list[str], slots: dict[str, SlotState], active: tuple[Sl
         lines = [re.sub(r"^(\d+\.|[-•□○])\s*", "", line) for line in lines]
         if lines:
             lines[-1] += marks.get("content", "") + marks.get("name", "")
-        out += [f"□ {line}  " for line in lines] or ["□ 해당 없음  "]
+        out += [f"□ {_tilde(line)}  " for line in lines] or ["□ 해당 없음  "]
         out.append("")
 
 
@@ -286,6 +331,7 @@ def render_document(
     today: date | None = None,
 ) -> str:
     today = today or date.today()
+    base_year = _base_year(profile, today)
     cites = _Citations()
     out: list[str] = ["# 업무 인수인계서", ""]
     active = slots_for(profile)
@@ -309,20 +355,20 @@ def render_document(
     out.append("")
 
     if is_office(profile):  # 팀장용 원내 양식: 공문서처럼 목록마다 제목 + 개괄식 문장(□). 1번은 업무 단위 요약 + 일정 명세표
-        _render_office(out, slots, active, cites)
+        _render_office(out, slots, active, cites, base_year)
         return "\n".join(out)
 
     number = 0
     for index, spec in enumerate(visible):
         if spec.group and index > 0 and visible[index - 1].group == spec.group:
             out += [f"### {spec.title}", ""]  # 같은 장 제목 아래 소제목(기타 자료: 시스템 접근 권한 · 부서별 추가 자료)
-            _render_slot(out, spec, slots, active, cites)
+            _render_slot(out, spec, slots, active, cites, base_year)
             continue
         number += 1
         if spec.group:
             out += [f"## {number}. {spec.group}", "", f"### {spec.title}", ""]
         else:
             out += [f"## {number}. {spec.title}", ""]
-        _render_slot(out, spec, slots, active, cites)
+        _render_slot(out, spec, slots, active, cites, base_year)
 
     return "\n".join(out)
