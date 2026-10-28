@@ -301,3 +301,14 @@ def test_manager_form_keeps_selected_names_on_answers():
     _apply_updates(None, {"profile": {"form": "office"}}, slots, Interpretation(intent="answer", updates=[update]), "답", None)
     item = slots["office_issues"]["items"][0]
     assert item["title"] == "AMIGO 고도화" and item["fields"]["name"] == "AMIGO 고도화"
+
+
+def test_manager_form_does_not_ask_the_plan_period():
+    """팀장 질의응답: 사업계획의 계획기간은 묻지 않는다(자료에서 읽히면 채우고, 아니면 최종 문서 일정표에서 직접 고른다). 비고(진행상황)는 그대로 묻는다."""
+    from amigo_agent.template import ASK_AUTO
+
+    assert SLOT_BY_KEY["office_plans"].field("period").ask == ASK_AUTO
+    agent = HandoverAgent()
+    snap = agent.start("noperiod", {**PROFILE, "form": "office", "plans": ["사업 A"]}, FakeKB()).snapshot
+    assert not [g for g in snap["gaps"] if g["slot"] == "office_plans" and g.get("field") == "period"]
+    assert any(g["slot"] == "office_plans" and g.get("field") == "note" for g in snap["gaps"])
