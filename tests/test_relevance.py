@@ -43,7 +43,8 @@ def test_explicit_skip_still_skips_with_a_fixed_message_and_no_invented_question
     gap_id = agent.start("sk2", PROFILE, kb).messages[-1]["meta"]["gap_id"]
     result = agent.send_message("sk2", "모르겠어요 (건너뛰기)", kb)
     assert {g["id"]: g["status"] for g in result.snapshot["gaps"]}[gap_id] == "skipped"
-    text = result.messages[-1]["content"]
+    text = result.messages[-2]["content"]
+    assert result.messages[-2]["kind"] == "info" and "건너뛰었어요" not in result.messages[-1]["content"]
     assert text.startswith("건너뛰었어요. '확인 필요 사항'으로 남겨 둘게요.") and "지어낸 다른 질문" not in text  # 모델이 끼워 넣은 질문은 쓰지 않는다
 
 
@@ -102,4 +103,5 @@ def test_none_answer_fills_the_cell_with_not_applicable_and_moves_on(kb):
     assert gap["status"] == "resolved"
     item = next(it for it in result.snapshot["slots"][target["slot"]]["items"] if it["id"] == target["item_id"])
     assert item["fields"][target["field"]] == "해당 없음"
-    assert "'해당 없음'으로 기록했어요" in result.messages[0]["content"] and result.messages[0]["kind"] == "question"  # 다음 질문으로 넘어간다
+    assert "'해당 없음'으로 기록했어요" in result.messages[0]["content"] and result.messages[0]["kind"] == "info"
+    assert result.messages[1]["kind"] == "question" and "해당 없음" not in result.messages[1]["content"]  # 다음 질문에는 붙이지 않는다

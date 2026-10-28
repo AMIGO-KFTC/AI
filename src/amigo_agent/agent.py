@@ -203,6 +203,21 @@ class HandoverAgent:
             self.graph.update_state(config, {"slots": {key: slots[key]}, "document": markdown})
             return {"markdown": markdown, "version": version}
 
+    def rerender(self, thread_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+        """인계자 정보를 patch 로 고치고 같은 버전으로 문서를 다시 만든다(Claude 호출 없음). 팀장 양식의 부서별 추가자료 등록 상태 등에 쓴다."""
+        with self._lock(thread_id):
+            if not self._has_state(thread_id):
+                raise AgentStateError("아직 분석을 시작하지 않았습니다.")
+            config = self._config(thread_id)
+            values = self.graph.get_state(config).values or {}
+            if not values.get("document"):
+                raise AgentStateError("아직 생성된 인수인계서가 없습니다.")
+            profile = {**(values.get("profile") or {}), **patch}
+            version = int(values.get("document_version") or 1)
+            markdown = render_document(profile=profile, slots=values.get("slots") or {}, gaps=values.get("gaps") or [], sources=values.get("sources") or [], version=version)
+            self.graph.update_state(config, {"profile": profile, "document": markdown})
+            return {"markdown": markdown, "version": version}
+
     def update_profile(self, thread_id: str, patch: dict[str, Any]) -> bool:
         """진행 중인 대화의 인계자 정보를 갱신한다(값이 None 이면 그 키를 지운다). 바뀐 것이 있으면 True.
 

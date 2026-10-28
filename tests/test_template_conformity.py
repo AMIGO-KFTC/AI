@@ -9,7 +9,7 @@ from amigo_agent.template import slots_for
 from htmltables import html_tables, texts
 
 LEAVE = {"name": "김민수", "mode": "leave"}
-B_LABELS = ["업무 유형", "주요 일정 및 처리사항", "현재 진행 상태", "업무 처리방법", "주의사항 및 후속조치", "참고자료"]
+B_LABELS = ["주요 일정 및 처리사항", "현재 진행 상태", "업무 처리방법", "주의사항 및 후속조치", "참고자료"]
 
 
 def _leave_slots():

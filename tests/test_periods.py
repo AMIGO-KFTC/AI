@@ -89,7 +89,7 @@ def test_gantt_long_span_widens_table():
 def test_tilde_pairs_do_not_become_strikethrough():
     import mistune
 
-    items = [{"id": "o1", "title": "현안", "fields": {"name": "현안", "content": "리뉴얼(26년 12월~27년 1월) / 점검(11월~이듬해 2월)"}}]
+    items = [{"id": "o1", "title": "15. 기타 주요사항", "fields": {"name": "15. 기타 주요사항", "content": "리뉴얼(26년 12월~27년 1월) / 점검(11월~이듬해 2월)"}}]
     doc = render_document(
         profile={"form": "office", "handover_date": "2026-10-26"}, slots={"office_items": {"items": items}}, gaps=[], sources=[], version=1, today=date(2026, 10, 26)
     )

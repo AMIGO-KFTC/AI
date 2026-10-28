@@ -17,7 +17,26 @@ from typing import Any
 from .periods import MAX_SPAN_MONTHS, plan_span, ym_from_index, ym_index
 from .relevance import bigrams
 from .state import Gap, SlotState, item_label, normalize_title
-from .template import MODE_LABELS, OFFICE_FIRST_TITLE, OFFICE_SLOT, is_office, PARTNER_SCOPES, SLOT_BY_KEY, FieldSpec, SlotSpec, leave_period, mode_of, profile_units, slots_for
+from .dept_info import clean_dept_info
+from .template import (
+    MODE_LABELS,
+    OFFICE_DEPT_TITLE,
+    OFFICE_FIRST_TITLE,
+    OFFICE_ISSUES,
+    OFFICE_PENDING,
+    OFFICE_PLANS,
+    OFFICE_SLOT,
+    PARTNER_SCOPES,
+    SLOT_BY_KEY,
+    FieldSpec,
+    SlotSpec,
+    is_office,
+    leave_period,
+    mode_of,
+    profile_plans,
+    profile_units,
+    slots_for,
+)
 
 class _Citations:
     """근거 번호. 장 순서 → 항목 순서 → 항목의 근거 순서로 매기고, 같은 (출처 표기, 조각) 은 같은 번호(BackEnd routers/evidence.py 와 같은 규칙)."""
@@ -56,19 +75,38 @@ def _tilde(text: str) -> str:
     return re.sub(r"(?<!\\)~", r"\~", text)
 
 
+LINE_SEP_RE = re.compile(r"\s*\n+\s*|\s+/\s+")  # 칸 안에서 문장을 나누는 줄바꿈과 ' / '(모델이 여러 내용을 잇는 표시)
+
+
+NUMBERED_RE = re.compile(r"^(\d{1,2})[.)]\s+")
+
+
+def _lines_br(text: str) -> str:
+    """칸 안의 여러 문장을 줄바꿈(<br>)으로 나눈다(노션 '추가 요구사항 정의': 새 문장은 '/' 대신 줄바꿈).
+    번호 목록의 항목이 하나뿐이면('1. …'만 있으면) 번호를 뗀다(같은 문서 17)."""
+    parts = [part for part in LINE_SEP_RE.split(text.replace("\r", "")) if part.strip()]
+    numbered = [i for i, part in enumerate(parts) if NUMBERED_RE.match(part)]
+    if len(numbered) == 1 and NUMBERED_RE.match(parts[numbered[0]]).group(1) == "1":
+        parts[numbered[0]] = NUMBERED_RE.sub("", parts[numbered[0]], count=1)
+    return "<br>".join(parts)
+
+
 def _cell(value: Any) -> str:
     text = _tilde(_clean(value))
-    return text.replace("|", "\\|").replace("\r", "").replace("\n", " / ") or "-"
+    return _lines_br(text.replace("|", "\\|")) or "-"
 
 
 HANDWRITTEN_BLANK = "ID: ________ / PW: ________"
 BAR_COLOR = "#7055C8"  # 월별 일정표의 막대 색(화면은 CSS, Word/PDF 는 이 색으로 칠한다)
 
 
-def _h(value: Any) -> str:
-    """HTML 표 칸에 넣을 값. 사용자가 쓴 글이 태그로 해석되지 않도록 모두 이스케이프한다."""
-    text = _clean(value)
-    return html.escape(text, quote=True).replace("\r", "").replace("\n", " / ") or "-"
+def _h(value: Any, br: bool = True) -> str:
+    """HTML 표 칸에 넣을 값. 사용자가 쓴 글이 태그로 해석되지 않도록 모두 이스케이프한다. 여러 문장은 줄바꿈(<br>)으로 나눈다.
+    월별 일정표의 칸(br=False)은 막대 수정(BackEnd merge_gantt_rows)이 칸 모양을 읽으므로 ' / '로 잇는다."""
+    text = html.escape(_clean(value), quote=True)
+    if br:
+        return _lines_br(text) or "-"
+    return text.replace("\r", "").replace("\n", " / ") or "-"
 
 
 def _md_table(out: list[str], headers: list[str], rows: list[list[str]]) -> None:
@@ -184,7 +222,7 @@ def _render_gantt(out: list[str], spec, items: list[dict], base_year: int) -> No
         period = str(fields.get("period") or "").strip()
         if period and not any(filled):  # 월로 읽을 수 없는 계획기간은 원문을 마지막 열(진행상황 요약)에 남긴다
             note = f"계획기간: {period}" + (f" · {note}" if note else "")
-        out.append(f"<tr><td>{_h(fields.get(spec.title_field))}</td>{_gantt_cells(filled)}<td>{_h(note)}</td></tr>")
+        out.append(f"<tr><td>{_h(fields.get(spec.title_field), br=False)}</td>{_gantt_cells(filled)}<td>{_h(note, br=False)}</td></tr>")
     out += ["</table>", ""]
 
 
@@ -238,7 +276,18 @@ def _children_for(child: SlotSpec, child_items: list[dict], name: str) -> list[d
     return [c for c in child_items if same_name(str((c.get("fields") or {}).get(child.embed_link) or ""), name)]
 
 
-def _render_cards(out: list[str], spec, items: list[dict], cites: _Citations, children: list[tuple[SlotSpec, list[dict]]]) -> None:
+GANADA = "가나다라마바사아자차카타파하"
+
+
+def _card_number(index: int, ganada: bool) -> str:
+    """카드 번호: 1) 2) … 또는 가. 나. …(14개를 넘으면 가1. 처럼 잇는다)."""
+    if not ganada:
+        return f"{index})"
+    letter = GANADA[(index - 1) % len(GANADA)]
+    return f"{letter}{(index - 1) // len(GANADA) or ''}."
+
+
+def _render_cards(out: list[str], spec, items: list[dict], cites: _Citations, children: list[tuple[SlotSpec, list[dict]]], heading: str = "###", ganada: bool = False) -> None:
     """항목마다 '항목 | 내용' 표로 보여 준다.
 
     다른 장에서 옮겨 온 표(협업관계: 외부 소속 | 이름 | 주요역할 | 연락처 | 비고, 내부 소속 | 이름 | 주요역할 | 비고 / 추진 경과: 시기 | 주요 추진 내용 | 비고)가
@@ -251,7 +300,7 @@ def _render_cards(out: list[str], spec, items: list[dict], cites: _Citations, ch
         fields.setdefault(spec.title_field, item_label(spec, item))
         name = fields.get(spec.title_field)
         marks = cites.marks(spec, item, fields)
-        out += [f"### {index}) {_cell(name)}{marks.get(spec.title_field, '')}", ""]
+        out += [f"{heading} {_card_number(index, ganada)} {_cell(name)}{marks.get(spec.title_field, '')}", ""]
         if not children:
             out += ["| 항목 | 내용 |", "|---|---|"]
             out += [f"| {f.label} | {_value_or_hint(f, fields, md=True)}{marks.get(f.key, '')} |" for f in shown]
@@ -285,6 +334,84 @@ def unlinked_children(slots: dict[str, SlotState], active: list[SlotSpec]) -> li
     return out
 
 
+UNIT_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+WORK_KINDS = (("regular", "정기업무"), ("irregular", "비정기 업무"))
+OTHER_UNIT = "기타 업무"
+
+
+def _unit_groups(profile: dict[str, Any], slots: dict[str, SlotState]) -> list[tuple[str, dict[str, list[dict]]]]:
+    """세부업무(정기·비정기)를 속한 단위업무별로 묶는다: [(단위업무, {"regular": [...], "irregular": [...]})].
+
+    단위업무 순서는 인계자가 고른 순서다. 세부업무의 단위업무(unit)가 고른 것과 맞지 않으면, 단위업무가 하나뿐이면 그 아래에,
+    아니면 '기타 업무' 아래에 둔다. 단위업무를 고르지 않은 예전 세션은 이름 없는 묶음 하나다.
+    """
+    names = [u["name"] for u in profile_units(profile) if u["name"]]
+    groups: dict[str, dict[str, list[dict]]] = {name: {"regular": [], "irregular": []} for name in names}
+    for kind, _ in WORK_KINDS:
+        for item in (slots.get(kind) or {}).get("items") or []:
+            unit = str((item.get("fields") or {}).get("unit") or "").strip()
+            target = next((n for n in names if unit and same_name(unit, n)), None)
+            if target is None:
+                target = names[0] if len(names) == 1 else (OTHER_UNIT if names else "")
+            groups.setdefault(target, {"regular": [], "irregular": []})[kind].append(item)
+    out = [(name, works) for name, works in groups.items() if name in names or works["regular"] or works["irregular"]]
+    return out or [("", {"regular": [], "irregular": []})]  # 세부업무가 하나도 없어도 정기·비정기 칸은 보인다
+
+
+def _render_main_contents(out: list[str], profile: dict[str, Any], slots: dict[str, SlotState], active: tuple[SlotSpec, ...], cites: _Citations) -> None:
+    """인사발령 '2. 주요 내용': A. 단위업무 → 1) 정기업무 / 2) 비정기 업무 → 가. 세부업무(카드). (노션 '추가 요구사항 정의' 16)"""
+    groups = _unit_groups(profile, slots)
+    lettered = [g for g in groups if g[0]]
+    for gi, (unit, works) in enumerate(groups):
+        if unit:
+            out += [f"### {UNIT_LETTERS[lettered.index((unit, works)) % len(UNIT_LETTERS)]}. {_cell(unit)}", ""]
+        for ki, (kind, label) in enumerate(WORK_KINDS, start=1):
+            spec = SLOT_BY_KEY[kind]
+            if spec not in active:
+                continue
+            out += [f"#### {ki}) {label}", ""]
+            items = works[kind]
+            if not items:
+                out += ["확인된 내용이 없습니다.", ""]
+                continue
+            children = [(c, (slots.get(c.key) or {}).get("items") or []) for c in active if c.embed_into == spec.key]
+            _render_cards(out, spec, items, cites, children, heading="#####", ganada=True)
+
+
+def evidence_items(profile: dict[str, Any], slots: dict[str, SlotState]) -> list[tuple[SlotSpec, dict]]:
+    """근거 번호를 다는 항목을 문서에 나오는 순서대로 돌려준다(BackEnd 근거 목록 API 가 화면과 같은 번호를 매기는 데 쓴다).
+
+    팀장 양식은 2 현안 → 3 제계약서 → 4 미결 → 5~15 목록, 인사발령은 '주요 내용'의 단위업무별(정기 → 비정기) 순서, 그 밖은 장 순서다.
+    근거 번호를 달지 않는 장(일정표)과 다른 장의 카드 안에 들어가는 표는 뺀다.
+    """
+    def items(key: str) -> list[dict]:
+        return list((slots.get(key) or {}).get("items") or [])
+
+    if is_office(profile):
+        def office(numbers: tuple[int, ...]) -> list[tuple[SlotSpec, dict]]:
+            out = []
+            for item in items(OFFICE_SLOT.key):
+                found = re.match(r"^(\d+)\.", _clean((item.get("fields") or {}).get("name") or item_label(OFFICE_SLOT, item)))
+                if found and int(found.group(1)) in numbers:
+                    out.append((OFFICE_SLOT, item))
+            return out
+        return ([(OFFICE_ISSUES, it) for it in items(OFFICE_ISSUES.key)] + office((3,))
+                + [(OFFICE_PENDING, it) for it in items(OFFICE_PENDING.key)] + office(tuple(range(5, 16))))
+    out: list[tuple[SlotSpec, dict]] = []
+    grouped = False
+    for spec in slots_for(profile):
+        if not spec.evidence or spec.embed_into:
+            continue
+        if spec.key in ("regular", "irregular") and mode_of(profile) != "leave":
+            if not grouped:
+                for _, works in _unit_groups(profile, slots):
+                    out += [(SLOT_BY_KEY[kind], it) for kind, _ in WORK_KINDS for it in works[kind]]
+                grouped = True
+            continue
+        out += [(spec, it) for it in items(spec.key)]
+    return out
+
+
 def _render_slot(out: list[str], spec: SlotSpec, slots: dict[str, SlotState], active: tuple[SlotSpec, ...], cites: _Citations, base_year: int) -> None:
     items = (slots.get(spec.key) or {}).get("items") or []
     children = [(c, (slots.get(c.key) or {}).get("items") or []) for c in active if c.embed_into == spec.key]
@@ -304,21 +431,96 @@ def _render_slot(out: list[str], spec: SlotSpec, slots: dict[str, SlotState], ac
         _render_table(out, spec, items, cites)
 
 
-def _render_office(out: list[str], slots: dict[str, SlotState], active: tuple[SlotSpec, ...], cites: _Citations, base_year: int) -> None:
-    """원내 양식: '## 1. 주요 사업계획 및 집행상황표'(월별 일정표) 뒤에 목록마다 '## 번호. 목록' 과 □ 개괄식 문장. 비고는 AI 참고사항이라 싣지 않는다."""
-    out += [f"## {OFFICE_FIRST_TITLE}", ""]
-    _render_slot(out, SLOT_BY_KEY["overview"], slots, active, cites, base_year)
-    for number, item in enumerate((slots.get(OFFICE_SLOT.key) or {}).get("items") or [], start=2):
+def _bullet_lines(text: Any) -> list[str]:
+    """'A / B' 나 여러 줄로 이어 쓴 내용을 개괄식 문장 목록으로 나눈다(앞의 번호·기호는 뗀다)."""
+    lines = [line.strip() for line in re.split(r"\s+/\s+|\n+", _clean(text)) if line.strip()]
+    return [re.sub(r"^(\d{1,2}\.(?!\d)|[-•□○])\s*", "", line) for line in lines]  # '1. ' 같은 번호만 뗀다('2026.03 착수'의 연도는 남긴다)
+
+
+def _boxes(text: Any, mark: str = "", symbol: str = "□") -> list[str]:
+    """개괄식 문장(□ …). 마지막 문장 끝에 근거 번호를 붙인다. 내용이 없으면 '해당 없음'."""
+    lines = _bullet_lines(text)
+    if lines:
+        lines[-1] += mark
+    return [f"{symbol} {_tilde(line)}  " for line in lines] or [f"{symbol} 해당 없음  "]
+
+
+def _render_office_items(out: list[str], slots: dict[str, SlotState], cites: _Citations, numbers: tuple[int, ...]) -> None:
+    """원내 양식의 자료에서만 산출하는 목록(3번, 5~15번): '## 번호. 목록' 과 □ 개괄식 문장. 비고는 AI 참고사항이라 싣지 않는다."""
+    for item in (slots.get(OFFICE_SLOT.key) or {}).get("items") or []:
         fields = dict(item.get("fields") or {})
         fields.setdefault("name", item_label(OFFICE_SLOT, item))
+        found = re.match(r"^(\d+)\.", _clean(fields["name"]))
+        if not found or int(found.group(1)) not in numbers:
+            continue
         marks = cites.marks(OFFICE_SLOT, item, fields)
-        out += [f"## {number}. {re.sub(r'^\d+\.\s*', '', _clean(fields['name']))}", ""]  # 생략한 목록(8~10번)을 빼고 화면 목차와 같은 순서 번호
-        lines = [line.strip() for line in re.split(r"\s+/\s+|\n+", _clean(fields.get("content"))) if line.strip()]
-        lines = [re.sub(r"^(\d+\.|[-•□○])\s*", "", line) for line in lines]
-        if lines:
-            lines[-1] += marks.get("content", "") + marks.get("name", "")
-        out += [f"□ {_tilde(line)}  " for line in lines] or ["□ 해당 없음  "]
+        out += [f"## {_clean(fields['name'])}", ""]
+        out += _boxes(fields.get("content"), marks.get("content", "") + marks.get("name", ""))
         out.append("")
+
+
+def _render_office_issues(out: list[str], slots: dict[str, SlotState], cites: _Citations) -> None:
+    """2. 주요 현안사항: 현안마다 가. 개요 / 나. 진행상황 / 다. 고려사항(□ 개괄식). 현안이 하나면 번호를 붙이지 않는다."""
+    items = (slots.get(OFFICE_ISSUES.key) or {}).get("items") or []
+    out += ["## 2. 주요 현안사항", ""]
+    if not items:
+        out += ["□ 해당 없음  ", ""]
+        return
+    for index, item in enumerate(items, start=1):
+        fields = dict(item.get("fields") or {})
+        name = _clean(fields.get("name") or item_label(OFFICE_ISSUES, item))
+        marks = cites.marks(OFFICE_ISSUES, item, fields)
+        out += [f"### {name}" if len(items) == 1 else f"### {index}) {name}", ""]
+        for label, key in (("가. 개요", "summary"), ("나. 진행상황", "progress"), ("다. 고려사항", "considerations")):
+            out += [f"**{label}**", ""] + _boxes(fields.get(key), marks.get(key, "")) + [""]
+
+
+def _render_office_pending(out: list[str], slots: dict[str, SlotState], cites: _Citations) -> None:
+    """4. 주요 미결사항의 경과 및 처리대책: 미결사항마다 □ 이름, 그 아래 ○ 경과 / ○ 처리대책."""
+    items = (slots.get(OFFICE_PENDING.key) or {}).get("items") or []
+    out += ["## 4. 주요 미결사항의 경과 및 처리대책", ""]
+    if not items:
+        out += ["□ 해당 없음  ", ""]
+        return
+    for item in items:
+        fields = dict(item.get("fields") or {})
+        marks = cites.marks(OFFICE_PENDING, item, fields)
+        out.append(f"□ {_tilde(_clean(fields.get('name') or item_label(OFFICE_PENDING, item)))}{marks.get('name', '')}  ")
+        for label, key in (("경과", "progress"), ("처리대책", "plan")):
+            value = "; ".join(_bullet_lines(fields.get(key))) or "해당 없음"
+            out.append(f"  ○ {label}: {_tilde(value)}{marks.get(key, '')}  ")
+        out.append("")
+
+
+def _render_office_dept(out: list[str], profile: dict[str, Any]) -> None:
+    """16. 부서·팀(반, 사무소)별 추가자료: 소속 부·팀 인수인계 목록이 있는 팀만 싣는다. 항목마다 자료를 올렸는지 표로 보인다(화면은 올리는 카드로 그린다)."""
+    info = clean_dept_info((profile or {}).get("dept_notes"))
+    names = info["items"]
+    if not names:
+        return
+    uploads = (profile or {}).get("dept_uploads") or {}
+    out += [
+        f"## {OFFICE_DEPT_TITLE}",
+        "",
+        f"해당 부서의 인수인계에 필요한 추가자료 {len(names)}개 항목이 확인되었습니다. 아래 항목별로 자료를 등록해 주세요.",
+        "",
+    ]
+    rows = []
+    for name in names:
+        files = [str(f) for f in (uploads.get(name) or []) if str(f).strip()] if isinstance(uploads, dict) else []
+        rows.append([_cell(name), _cell("등록됨: " + ", ".join(files)) if files else "자료 등록 필요"])
+    _md_table(out, ["추가자료", "등록 여부"], rows)
+
+
+def _render_office(out: list[str], profile: dict[str, Any], slots: dict[str, SlotState], active: tuple[SlotSpec, ...], cites: _Citations, base_year: int) -> None:
+    """관리자(팀장) 인사발령 원내 양식: 1 사업계획 일정표 → 2 현안 → 3 제계약서 → 4 미결 → 5~15 목록 → (해당 팀만) 16 부서·팀별 추가자료."""
+    out += [f"## {OFFICE_FIRST_TITLE}", ""]
+    _render_slot(out, OFFICE_PLANS, slots, active, cites, base_year)
+    _render_office_issues(out, slots, cites)
+    _render_office_items(out, slots, cites, (3,))
+    _render_office_pending(out, slots, cites)
+    _render_office_items(out, slots, cites, tuple(range(5, 16)))
+    _render_office_dept(out, profile)
 
 
 def render_document(
@@ -346,20 +548,28 @@ def render_document(
         ("휴가 기간", leave_period(profile)),
         ("인계 일자", profile.get("handover_date")),
         ("인계 유형", MODE_LABELS[mode_of(profile)] + (" · 원내 양식(팀장)" if is_office(profile) else "")),
-        ("단위 업무명", units or profile.get("task_name")),
-        ("담당 업무", profile.get("duties")),
+        ("주요 사업계획", ", ".join(profile_plans(profile))) if is_office(profile) else ("단위 업무명", units or profile.get("task_name")),
+        ("담당 업무", None if is_office(profile) else profile.get("duties")),
         ("작성", f"{today.isoformat()} · AMIGO 자동 작성 초안 v{version}"),
     ]
     out += ["| 구분 | 내용 |", "|---|---|"]
     out += [f"| {k} | {_cell(v)} |" for k, v in rows if v]
     out.append("")
 
-    if is_office(profile):  # 팀장용 원내 양식: 공문서처럼 목록마다 제목 + 개괄식 문장(□). 1번은 업무 단위 요약 + 일정 명세표
-        _render_office(out, slots, active, cites, base_year)
+    if is_office(profile):  # 팀장용 원내 양식: 공문서처럼 목록마다 제목 + 개괄식 문장(□). 1번은 사업계획 일정표
+        _render_office(out, profile, slots, active, cites, base_year)
         return "\n".join(out)
 
     number = 0
+    main_done = False
     for index, spec in enumerate(visible):
+        if spec.key in ("regular", "irregular") and mode_of(profile) != "leave":
+            if not main_done:  # 정기·비정기 업무는 '주요 내용' 한 장에서 단위업무별로 묶는다
+                number += 1
+                out += [f"## {number}. 주요 내용", ""]
+                _render_main_contents(out, profile, slots, active, cites)
+                main_done = True
+            continue
         if spec.group and index > 0 and visible[index - 1].group == spec.group:
             out += [f"### {spec.title}", ""]  # 같은 장 제목 아래 소제목(기타 자료: 시스템 접근 권한 · 부서별 추가 자료)
             _render_slot(out, spec, slots, active, cites, base_year)

@@ -47,7 +47,9 @@ def test_full_flow_stage_1_to_4(kb):
 
     # 아니요 → '해당 없음'으로 기록하고 다음 질문(의사결정, 예/아니요)
     result = agent.send_message("s1", "아니요", kb)
-    assert kinds(result) == ["question"] and result.messages[0]["content"].startswith("'중점 관리사항'은(는) '해당 없음'으로 기록했어요.")
+    # 처리 결과는 따로 보내고(직전 질문의 대화에 남는다) 다음 질문에는 붙이지 않는다(노션 '추가 요구사항 정의' 건너뛰기 오류)
+    assert kinds(result) == ["info", "question"] and result.messages[0]["content"].startswith("'중점 관리사항'은(는) '해당 없음'으로 기록했어요.")
+    assert "해당 없음" not in result.messages[1]["content"]
     item = result.snapshot["slots"]["regular"]["items"][0]
     assert item["fields"]["key_points"] == "해당 없음"
     assert current(result.snapshot)["field"] == "decisions"
@@ -69,9 +71,14 @@ def test_full_flow_stage_1_to_4(kb):
     assert not result.messages[0]["content"].startswith(("**[", "["))  # 장 이름은 본문이 아니라 meta.slot 으로 알린다
     assert "확인했습니다" not in result.messages[0]["content"]
 
-    # 건너뛰기
+    # 건너뛰기: 보조질문이면 그 칸을 '해당 없음'으로 기록하고(질문은 끝남), 필수 질문이면 '확인 필요 사항'으로 남긴다
+    asked = current(result.snapshot)
     result = agent.skip("s1", kb)
-    assert len([g for g in result.snapshot["gaps"] if g["status"] == "skipped"]) == 1
+    if asked.get("aux"):
+        assert {g["id"]: g["status"] for g in result.snapshot["gaps"]}[asked["id"]] == "resolved"
+        assert kinds(result) == ["info", "question"] and "'해당 없음'으로 기록했어요" in result.messages[0]["content"]
+    else:
+        assert len([g for g in result.snapshot["gaps"] if g["status"] == "skipped"]) == 1
 
     # 지금 문서 생성
     result = agent.finish("s1", kb)
@@ -80,10 +87,10 @@ def test_full_flow_stage_1_to_4(kb):
     version = snap["document_version"]
     doc = snap["document"]
     assert doc.startswith("# 업무 인수인계서")
-    for heading in ("## 1. 업무 단위 요약 + 일정 명세표", "## 2. 정기업무", "## 3. 비정기 업무(프로젝트성)", "## 4. 기타 자료"):
+    for heading in ("## 1. 업무 단위별 일정 명세표", "## 2. 주요 내용", "#### 1) 정기업무", "#### 2) 비정기 업무", "## 3. 기타 자료"):
         assert heading in doc
     assert "## 5." not in doc and "확인 필요 사항" not in doc and "근거 자료" not in doc  # 양식에 없는 장은 싣지 않는다
-    assert "SLA 1시간" in doc and "### 2) 보도자료 게시" in doc
+    assert "SLA 1시간" in doc and "##### 나. 보도자료 게시" in doc
 
     # 검토 의견 → 문서 재작성(v2)
     result = agent.send_message("s1", "Google Analytics 권한은 기존 담당자가 직접 이관해 줍니다", kb)
@@ -117,7 +124,7 @@ def test_repeated_corrections_stop_after_two_rounds(kb):
     assert kinds(first) == ["confirm"]
     assert "요, " not in first.messages[0]["content"]  # '아니요' 를 통째로 떼어 낸다
     second = agent.send_message("s5", "아니요, SLA 30분 기준이에요", kb)
-    assert kinds(second) == ["question"]
+    assert kinds(second) == ["info", "question"]
     assert second.messages[0]["content"].startswith("고쳐 주신 내용으로 반영해 둘게요.")
     assert not second.snapshot["pending"]
     assert "SLA 30분" in second.snapshot["slots"]["regular"]["items"][0]["fields"]["decisions"]
@@ -141,7 +148,7 @@ def test_files_trigger_reanalysis_and_keep_user_answers(kb):
     assert [it["title"] for it in result.snapshot["slots"]["regular"]["items"]] == ["유지보수 월간 실적 검수", "보도자료 게시"]  # 입력한 세부업무만
     assert "SLA 1시간" in result.snapshot["slots"]["regular"]["items"][0]["fields"]["decisions"]  # 재분석해도 인계자 답변은 유지
     assert result.messages[-1]["kind"] == "question"
-    assert "새 자료(연락망.xlsx)를 반영했어요" in result.messages[-1]["content"]
+    assert "새 자료(연락망.xlsx)를 반영했어요" in result.messages[-2]["content"] and result.messages[-2]["kind"] == "info"
 
 
 def test_errors_before_start_and_no_question_limit(kb):
@@ -255,4 +262,4 @@ def test_questions_are_asked_in_template_order_one_task_at_a_time(kb):
         asked.append(((0 if parent_key == "regular" else 1), index, row))
         snap = agent.skip("order", kb).snapshot
     assert asked and asked == sorted(asked)
-    assert {a[0] for a in asked} == {0, 1, 2} and len({(a[0], a[1]) for a in asked if a[0] < 2}) == 3  # 정기 2건, 비정기 1건, 그다음 기타 자료
+    assert {a[0] for a in asked} == {0, 1} and len({(a[0], a[1]) for a in asked}) == 3  # 정기 2건, 비정기 1건(부서별 추가 자료는 묻지 않는다)

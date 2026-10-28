@@ -137,23 +137,33 @@ class SlotSpec:
 BOTH = (MODE_REASSIGNMENT, MODE_LEAVE)
 FORM_OFFICE = "office"  # 팀장이 쓰는 인수인계서: template 의 양식 대신 원내 양식(OFFICE_ITEMS)으로 만든다(profile["form"])
 
-# 원내 인수인계서 양식(노션 '수정사항' 10.25 '팀장님용 인수인계서는 원내 양식으로'): (목록, 비고). 8~10번은 양식에서 생략한다.
-# 1번 '주요 사업계획 및 집행상황표'는 일반 인수인계의 업무 단위 요약 + 일정 명세표(overview: 단위업무명 · 계획기간 · 진행상황 요약)를 그대로 쓴다.
+# 관리자(팀장) 인사발령 인수인계서(노션 '추가 요구사항 정의' 5) · '인수인계서 형식'의 [관리자 인사발령]): 원내 양식 1~15번 + 해당 팀만 16번.
+#   1. 주요 사업계획 및 집행상황표 — 시작할 때 고른 주요 사업계획(profile["plans"])마다 계획기간 막대와 비고(진행상황 요약). 질문함
+#   2. 주요 현안사항 — 현안이 있다고 고른 사업계획·직접 추가한 현안(profile["issues"])마다 가. 개요 / 나. 진행상황 / 다. 고려사항. 질문함
+#   3. 제계약서 명세표, 5~15번 — 직전 인수인계서·첨부 자료에서만 산출(OFFICE_ITEMS, 질문하지 않음)
+#   4. 주요 미결사항의 경과 및 처리대책 — <1> 미결 업무가 있는지 묻고, 있으면 <2> 경과·조치를 묻는다
+#   16. 부서·팀(반, 사무소)별 추가자료 — 부·팀 인수인계 목록이 있는 팀만, 목록의 자료를 올리게 한다(render)
 OFFICE_FIRST_TITLE = "1. 주요 사업계획 및 집행상황표"
-OFFICE_ITEMS: tuple[tuple[str, str], ...] = (
-    ("2. 주요 현안사항", ""),
-    ("3. 주요 미결사항의 경과 및 처리대책", ""),
-    ("4. 제계약서 명세표", ""),
+OFFICE_ITEMS: tuple[tuple[str, str], ...] = (  # (목록, 비고). 비고는 AI 가 내용을 쓸 때 참고하는 사항이라 문서에는 싣지 않는다
+    ("3. 제계약서 명세표", ""),
     ("5. 중요 인장 보관 명세표", "인장명, 인영, 보관자 직책·성명"),
     ("6. 보관문서목록표", ""),
     ("7. 전산기기 및 관련 통신장비 보유현황", "리스 도입분 포함"),
+    ("8. 고정자산 및 비품 명세표", ""),
+    ("9. 보안업무 관련사항", ""),
+    ("10. 법인신용카드보관명세표", ""),
     ("11. 담당규정목록", "부서간·팀(반, 사무소)간 업무이관시"),
     ("12. 실무지침", ""),
     ("13. 담당업무 매뉴얼", "최신 내용으로 정비여부 확인"),
-    ("14. 주기적 업무 체크리스트", ""),
-    ("15. 기타 주요사항", ""),
+    ("14. 주기적 업무체크리스트", ""),
+    ("15. 기타 주요사항", "다른 목록에 들어가지 않는 사항만. 1번 사업계획·2번 현안·4번 미결사항에 쓰는 내용은 다시 쓰지 않음"),
 )
-OFFICE_QUESTION = "인수자가 꼭 알아야 할 주요 현안이나 아직 끝나지 않은 일, 업무하면서 주의할 점이 있다면 편하게 알려 주세요."
+OFFICE_DEPT_TITLE = "16. 부서·팀(반, 사무소)별 추가자료"
+OFFICE_PENDING_QUESTION = (
+    "현재까지 처리되지 않았거나, 후임자가 이어서 처리해야 할 주요 업무가 있나요? "
+    "처리가 지연되거나 검토·협의·승인 등이 완료되지 않은 업무를 작성해 주세요."
+)
+OFFICE_PENDING_FOLLOW = "현재까지 어떤 절차나 조치가 진행되었나요? / 해당 사항을 해결하기 위해 앞으로 어떤 조치가 필요한가요?"
 OTHER_MATERIALS = "기타 자료"
 PARTNER_SCOPES = ("외부", "내부")  # 협업 대상 표를 나누는 순서. 우리 기관 소속이면 내부, 그 밖(외부 기관·업체)은 외부
 
@@ -162,14 +172,14 @@ SLOTS: tuple[SlotSpec, ...] = (
     # ------------------------------------------------------------------ [인사발령] A
     SlotSpec(
         key="overview",
-        title="업무 단위 요약 + 일정 명세표",
+        title="업무 단위별 일정 명세표",
         description="인계하는 단위 업무(업무분장상 단위업무, 예: 공동망 운영, 40년사 발간 추진)와 업무별 계획기간(월별 일정). "
         "단위업무는 인계자가 직제규정 시행세칙에서 고른 것이며, 이 장은 질문하지 않습니다. 계획기간은 사업계획서·추진계획 등 자료에서 읽고, "
         "진행상황 요약은 문서를 만들 때 지금까지 수집된 내용으로 자동 작성합니다.",
         fields=(
             FieldSpec("name", "단위업무명", "예: 공동망 운영", ask=ASK_AUTO),
             FieldSpec("period", "계획기간", "예: 2026.03~2026.12, 매월 상시", ask=ASK_AUTO),
-            FieldSpec("note", "진행상황 요약", "단위 업무가 지금 어디까지 진행되었는가?", ask=ASK_AUTO),
+            FieldSpec("note", "비고", "진행상황 요약: 단위 업무가 지금 어디까지 진행되었는가?(핵심 성과·현재·다음 단계, 1~2문장 80자 안팎)", ask=ASK_AUTO),
         ),
         min_items=1,
         queries=("단위업무 업무 개요 계획 일정", "연간 계획 추진 일정 기간", "담당 업무 목록 업무 분장", "추진 현황 진행 상황"),
@@ -310,18 +320,17 @@ SLOTS: tuple[SlotSpec, ...] = (
     SlotSpec(
         key="leave_tasks",
         title="세부 업무",
-        description="부재 기간 중 대신 처리할 세부 업무. 인계자가 정기/비정기로 나눠 입력한 세부업무가 항목이다. "
-        "업무 유형, 일정·처리사항, 현재 진행 상태, 처리방법, 주의사항 및 후속조치, 참고자료를 담는다.",
+        description="부재 기간 중 대신 처리할 세부 업무. 인계자가 입력한 세부업무가 항목이다(장기휴가는 정기/비정기로 나누지 않는다). "
+        "일정·처리사항, 현재 진행 상태, 처리방법, 주의사항 및 후속조치, 참고자료를 담는다.",
         fields=(
             FieldSpec("name", "세부 업무명", "예: 월간 경영실적 보고"),
-            FieldSpec("task_type", "업무 유형", "정기 / 비정기 중 하나(인계자가 입력할 때 고른 값)", ask=ASK_AUTO),
+            FieldSpec("task_type", "업무 유형", "예전 세션의 정기/비정기 구분(장기휴가는 나누지 않으므로 문서에 싣지 않음)", ask=ASK_HIDDEN),
             FieldSpec("schedule", "주요 일정 및 처리사항", "부재 기간 중 언제, 무엇을 처리해야 하는가?"),
             FieldSpec("status", "현재 진행 상태", "현재 진행단계는 어느 정도이며, 다음 진행단계는 어떻게 되는가?", ask=ASK_AUX),
             FieldSpec("method", "업무 처리방법", "어떻게 처리하면 되는가?"),
             FieldSpec("cautions", "주의사항 및 후속조치", "조심할 점, 문제 발생 시 대응, 아직 끝나지 않은 일이 있는가?", ask=ASK_AUX, specific=True),
             FieldSpec("references", "참고자료", "업무에 참고할 수 있는 자료가 어떤 것이 있는가?", ask=ASK_AUX, answers_only=True),
         ),
-        ask_when=(("status", "task_type", ("비정기",), ASK_MAIN),),
         min_items=1,
         modes=(MODE_LEAVE,),
         queries=("매일 매주 매월 정기 반복 업무", "처리 방법 절차 일정 마감", "프로젝트 진행 상태 다음 단계", "주의사항 비상 연락 미결 후속 조치"),
@@ -380,10 +389,10 @@ SLOTS: tuple[SlotSpec, ...] = (
         key="dept_notes",
         title="부서별 추가 자료",
         description="부서 업무의 특성상 반드시 챙겨야 하는 사항(외주 관리, 가맹점 관리, 라이선스 등)과 근거가 되는 사무인수인계서 사무목록·세부시행세칙. "
-        "소속 부·팀의 인계 서류·물품 정보가 있으면 인계자의 업무 단위와 관련된 것만 항목으로 만들고, 관리 내용이 자료에 없으면 다른 칸처럼 묻는다.",
+        "소속 부·팀의 인계 서류·물품 정보가 있으면 인계자의 업무 단위와 관련된 것만 항목으로 만든다. 이 장은 질의응답으로 묻지 않고 자료에서만 채운다(노션 '추가 요구사항 정의' 14).",
         fields=(
             FieldSpec("topic", "추가 자료", "예: 가맹점 관리, 외주 관리, 라이선스", ask=ASK_AUTO),
-            FieldSpec("detail", "관리 내용", "무엇을 어떻게 챙겨야 하는지"),
+            FieldSpec("detail", "관리 내용", "무엇을 어떻게 챙겨야 하는지", ask=ASK_AUTO),
             FieldSpec("basis", "관련 규정·자료", "사무인수인계서 사무목록·세부시행세칙 등", ask=ASK_AUTO),  # 문서 표의 근거 번호 열('근거')과 이름이 겹치지 않게
         ),
         min_items=1,
@@ -391,21 +400,77 @@ SLOTS: tuple[SlotSpec, ...] = (
         keywords=("외주", "가맹점", "라이선스", "라이센스", "위탁", "특이", "지침", "세칙", "사무목록"),
         default_question="소속 부서만의 추가 관리 사항(외주 관리, 가맹점 관리, 라이선스 등)이 있나요?\n없으면 '해당 없음'으로 건너뛰어 주세요.",
         group=OTHER_MATERIALS,
-        empty_ask=ASK_MAIN,
     ),
 )
 
-# 팀장용 원내 양식은 별도 장 하나로 만든다(인사발령·장기휴가 양식에는 들어가지 않는다).
+# 팀장용 원내 양식의 장(인사발령·장기휴가 양식에는 들어가지 않는다). 문서 순서: 1 사업계획 → 2 현안 → 3 제계약서 → 4 미결 → 5~15 → 16
+OFFICE_PLANS = SlotSpec(
+    key="office_plans",
+    title="주요 사업계획 및 집행상황표",
+    description="팀장이 인수인계를 시작할 때 고른 주요 사업계획(경영정보시스템 주요 업무보고 단위, 예: 은행 공동 본인확인 플랫폼 구축 추진)과 "
+    "사업계획별 계획기간(월별 일정)·비고. 항목은 고른 사업계획만 쓰고 이름은 고른 그대로 둔다. 계획기간은 사업계획서·업무보고·추진계획에서 읽고, "
+    "비고에는 지금까지의 진행상황을 1~2문장, 공백 포함 80자 안팎으로 짧게 요약한다(핵심 성과·현재 단계·다음 단계만).",
+    fields=(
+        FieldSpec("name", "주요 사업계획", "예: 은행 공동 본인확인 플랫폼 구축 추진", ask=ASK_AUTO),
+        FieldSpec("period", "계획기간", "예: 2026.03~2026.12, 2026.11~2027.02, 연중 상시"),
+        FieldSpec("note", "비고", "이 사업계획은 지금 어디까지 진행되었는가?(진행상황 요약)"),
+    ),
+    min_items=1,
+    modes=(),
+    queries=("주요 사업계획 업무보고 추진 실적", "사업계획 추진 일정 기간", "추진 현황 진행 상황"),
+    keywords=("사업계획", "추진", "계획", "기간", "일정", "실적", "현황", "진행"),
+    default_question="",
+    layout="gantt",
+    evidence=False,
+    seed="plans",
+    muted_note="실제 업무 추진 현황 및 예상일정을 막대 그래프로 나타내주세요",
+)
+OFFICE_ISSUES = SlotSpec(
+    key="office_issues",
+    title="주요 현안사항",
+    description="팀장이 현안이 있다고 고른 사업계획과 직접 추가한 현안. 현안마다 가. 개요(무엇이고 왜 현안인지), 나. 진행상황(지금까지의 경과), "
+    "다. 고려사항(후임 관리자가 특별히 알아야 할 점)을 근거 자료에서 찾아 개괄식으로 짧게 쓴다(여럿이면 ' / '로 이어 씀). 항목은 고른 현안만 쓴다.",
+    fields=(
+        FieldSpec("name", "현안", ask=ASK_AUTO),
+        FieldSpec("summary", "개요", "이 현안은 무엇이고 왜 현안인가?", ask=ASK_AUTO),
+        FieldSpec("progress", "진행상황", "지금까지 어떤 진행 경과가 있었는가?"),
+        FieldSpec("considerations", "고려사항", "후임 관리자가 특별히 알아야 할 사항은 무엇인가?"),
+    ),
+    min_items=0,
+    modes=(),
+    queries=("현안 이슈 쟁점 문제", "진행 경과 추진 현황", "유의사항 고려사항 리스크"),
+    keywords=("현안", "이슈", "쟁점", "경과", "진행", "협의", "유의", "고려"),
+    default_question="",
+    layout="card",
+    seed="issues",
+)
+OFFICE_PENDING = SlotSpec(
+    key="office_pending",
+    title="주요 미결사항의 경과 및 처리대책",
+    description="현재까지 처리되지 않았거나 후임자가 이어서 처리해야 할 주요 업무(처리 지연, 검토·협의·승인 미완료). 미결사항마다 경과(지금까지 진행된 절차·조치)와 "
+    "처리대책(해결하려면 앞으로 필요한 조치)을 쓴다. 이 장은 자료에서 채우지 않고 인계자에게 묻는 질문(<1> 미결 업무가 있는지 → 있으면 <2> 경과·조치)의 답으로만 채운다.",
+    fields=(
+        FieldSpec("name", "미결사항", "처리되지 않았거나 이어서 처리해야 할 업무", ask=ASK_AUTO),
+        FieldSpec("progress", "경과", "지금까지 어떤 절차나 조치가 진행되었는가?"),
+        FieldSpec("plan", "처리대책", "해결하기 위해 앞으로 어떤 조치가 필요한가?", ask=ASK_AUTO),
+    ),
+    min_items=0,
+    modes=(),
+    queries=("미결 지연 보류 승인 대기", "처리 대책 후속 조치 검토 협의"),
+    keywords=("미결", "지연", "보류", "대기", "검토", "협의", "승인", "후속"),
+    default_question=OFFICE_PENDING_QUESTION,
+    layout="card",
+    empty_ask=ASK_MAIN,
+)
 OFFICE_SLOT = SlotSpec(
     key="office_items",
     title="원내 인수인계서 양식",
-    description="팀장이 쓰는 원내 양식의 인수인계 목록. 항목은 아래 정해진 목록이며 항목 제목·목록(name)에는 목록 이름을 번호까지 글자 그대로 쓴다: "
+    description="팀장이 쓰는 원내 양식의 인수인계 목록(직전 인수인계서와 첨부 자료에서만 산출, 질문하지 않음). 항목은 아래 정해진 목록이며 항목 제목·목록(name)에는 목록 이름을 번호까지 글자 그대로 쓴다: "
     + ", ".join(name for name, _ in OFFICE_ITEMS)
     + ". 목록별 작성 참고사항(문서에는 싣지 않는다): "
     + "; ".join(f"{name} — {note}" for name, note in OFFICE_ITEMS if note)
     + ". 각 목록에 해당하는 서류·현황·내용을 근거 자료에서 찾아 '내용'에 개괄식으로 짧게 적고(여럿이면 ' / '로 이어 씀) 근거 ID 를 붙인다. "
-    "자료에서 하나라도 찾은 목록은 모두 항목으로 만들고, 찾지 못한 목록만 비워 둔다. 목록에 없는 항목은 만들지 않는다. "
-    "따로 질문하지 않고, 인수자에게 꼭 필요한 현안·주의점만 한 번 포괄적으로 묻는다.",
+    "자료에서 하나라도 찾은 목록은 모두 항목으로 만들고, 찾지 못한 목록만 비워 둔다. 목록에 없는 항목은 만들지 않는다. 질문은 만들지 않는다.",
     fields=(
         FieldSpec("name", "목록", ask=ASK_AUTO),
         FieldSpec("content", "내용", "이 목록에 해당하는 서류·현황·내용(자료에서 찾은 것)", ask=ASK_AUTO),
@@ -413,15 +478,16 @@ OFFICE_SLOT = SlotSpec(
     ),
     min_items=1,
     modes=(),
-    queries=("사업계획 집행 현황 현안", "미결사항 처리대책 계약서 명세", "인장 보관 문서 목록 전산기기 보유현황", "담당 규정 실무지침 매뉴얼 체크리스트"),
-    keywords=("사업계획", "현안", "미결", "계약", "인장", "문서", "전산", "규정", "지침", "매뉴얼", "체크리스트"),
-    default_question=OFFICE_QUESTION,
+    queries=("계약서 명세 계약 현황", "인장 보관 문서 목록 전산기기 보유현황", "고정자산 비품 보안업무 법인카드", "담당 규정 실무지침 매뉴얼 체크리스트"),
+    keywords=("계약", "인장", "문서", "전산", "자산", "비품", "보안", "카드", "규정", "지침", "매뉴얼", "체크리스트"),
+    default_question="",
     seed="office",
 )
+OFFICE_SLOTS: tuple[SlotSpec, ...] = (OFFICE_PLANS, OFFICE_ISSUES, OFFICE_PENDING, OFFICE_SLOT)
 
-SLOT_BY_KEY: dict[str, SlotSpec] = {s.key: s for s in (*SLOTS, OFFICE_SLOT)}
-SLOT_KEYS: tuple[str, ...] = tuple(s.key for s in (*SLOTS, OFFICE_SLOT))
-ALL_FIELD_KEYS: tuple[str, ...] = tuple(dict.fromkeys(f.key for s in (*SLOTS, OFFICE_SLOT) for f in s.fields))
+SLOT_BY_KEY: dict[str, SlotSpec] = {s.key: s for s in (*SLOTS, *OFFICE_SLOTS)}
+SLOT_KEYS: tuple[str, ...] = tuple(s.key for s in (*SLOTS, *OFFICE_SLOTS))
+ALL_FIELD_KEYS: tuple[str, ...] = tuple(dict.fromkeys(f.key for s in (*SLOTS, *OFFICE_SLOTS) for f in s.fields))
 
 
 def mode_of(profile: dict[str, Any] | None) -> str:
@@ -442,16 +508,16 @@ def leave_period(profile: dict[str, Any] | None) -> str:
 
 
 def slots_for(profile: dict[str, Any] | None) -> tuple[SlotSpec, ...]:
-    """이번 인수인계서에 쓰는 슬롯(버전별로 장 구성이 다르다). 팀장이 쓰는 인수인계서(form=office)는 원내 양식 한 장만 쓴다."""
+    """이번 인수인계서에 쓰는 슬롯(버전별로 장 구성이 다르다). 팀장이 쓰는 인수인계서(form=office)는 원내 양식의 장을 쓴다."""
     if is_office(profile):
-        return (SLOT_BY_KEY["overview"], OFFICE_SLOT)
+        return OFFICE_SLOTS
     mode = mode_of(profile)
     return tuple(s for s in SLOTS if mode in s.modes)
 
 
 def is_office(profile: dict[str, Any] | None) -> bool:
-    """팀장이 쓰는 인수인계서(원내 양식)인지."""
-    return str((profile or {}).get("form") or "").strip().lower() == FORM_OFFICE
+    """팀장이 쓰는 인사발령 인수인계서(원내 양식)인지. 팀장의 장기휴가는 실무자와 같은 양식으로 쓴다(노션 '추가 요구사항 정의' 관리자용 6)."""
+    return str((profile or {}).get("form") or "").strip().lower() == FORM_OFFICE and mode_of(profile) != MODE_LEAVE
 
 
 def profile_units(profile: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -470,8 +536,31 @@ def profile_units(profile: dict[str, Any] | None) -> list[dict[str, Any]]:
     return out
 
 
+def _names(values: Any) -> list[str]:
+    out: list[str] = []
+    for raw in values if isinstance(values, list) else []:
+        name = " ".join(str((raw.get("name") if isinstance(raw, dict) else raw) or "").split())
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def profile_plans(profile: dict[str, Any] | None) -> list[str]:
+    """팀장이 고른 주요 사업계획 이름(원내 양식 1번의 행)."""
+    return _names((profile or {}).get("plans"))
+
+
+def profile_issues(profile: dict[str, Any] | None) -> list[str]:
+    """팀장이 현안이 있다고 고른 사업계획과 직접 추가한 현안(원내 양식 2번의 항목)."""
+    return _names((profile or {}).get("issues"))
+
+
 def seed_items(spec: SlotSpec, profile: dict[str, Any] | None) -> list[dict[str, str]]:
-    """인계자 정보로 미리 만드는 항목의 필드: 단위업무(업무 단위 요약) · 세부업무(정기/비정기, 장기휴가 세부 업무)."""
+    """인계자 정보로 미리 만드는 항목의 필드: 단위업무(업무 단위 요약) · 세부업무(정기/비정기, 장기휴가 세부 업무) · 팀장의 사업계획·현안."""
+    if spec.seed == "plans":
+        return [{"name": name} for name in profile_plans(profile)]
+    if spec.seed == "issues":
+        return [{"name": name} for name in profile_issues(profile)]
     units = profile_units(profile)
     if spec.seed == "units":
         return [{"name": u["name"]} for u in units if u["name"]]
@@ -480,14 +569,13 @@ def seed_items(spec: SlotSpec, profile: dict[str, Any] | None) -> list[dict[str,
     if spec.seed == "office":
         return [{"name": name, "note": note} for name, note in OFFICE_ITEMS]
     if spec.seed == "leave":
-        kinds = (("regular", "정기"), ("irregular", "비정기"))
-        return [{"name": task, "task_type": label} for kind, label in kinds for u in units for task in u[kind]]
+        return [{"name": task} for kind in ("regular", "irregular") for u in units for task in u[kind]]  # 장기휴가는 정기/비정기로 나누지 않는다
     return []
 
 
 def has_seeds(profile: dict[str, Any] | None) -> bool:
-    """인계자가 단위업무·세부업무를 입력했는지(입력했으면 장의 항목은 입력한 것만 쓴다)."""
-    return bool(profile_units(profile))
+    """인계자가 단위업무·세부업무(팀장은 사업계획·현안)를 입력했는지(입력했으면 장의 항목은 입력한 것만 쓴다)."""
+    return bool(profile_units(profile) or profile_plans(profile) or profile_issues(profile))
 
 
 COVERAGE_LABELS = {"sufficient": "충분", "partial": "부분", "missing": "부족"}

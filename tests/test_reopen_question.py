@@ -100,3 +100,15 @@ def test_reopening_a_yes_no_question_asks_the_yes_no_question_again(kb):
     result = agent.reopen_question("g1", second["meta"]["gap_id"], kb)
     assert result.messages[-1]["meta"]["quick_replies"] == ["예", "아니요"] and "주요하게 결정한 사항이 있나요?" in result.messages[-1]["content"]
     assert first != second["meta"]["gap_id"]
+
+
+def test_answering_a_listed_question_on_the_document_removes_it(kb):
+    """노션 '추가 요구사항 정의' 23: 문서 화면 오른쪽 질문에 답해 문서에 반영되면 그 질문은 목록에서 내려간다."""
+    agent = HandoverAgent()
+    agent.start("r1", PROFILE, kb)
+    snap = agent.finish("r1", kb).snapshot
+    waiting = [g for g in snap["gaps"] if g["status"] in ("open", "asked", "skipped") and g.get("field") and g.get("item_id")]
+    target = waiting[0]
+    snap = agent.send_message("r1", f"[질문] {target['question']}\n[답변] 없어요", kb).snapshot
+    gap = next(g for g in snap["gaps"] if g["id"] == target["id"])
+    assert gap["status"] == "resolved" and snap["document_version"] == 2  # 해당 없음으로 기록하고 문서를 다시 만든다
