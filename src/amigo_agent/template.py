@@ -195,7 +195,7 @@ SLOTS: tuple[SlotSpec, ...] = (
         key="regular",
         title="정기업무",
         description="일·주·월·분기·연 단위로 정기성이 있는 세부 업무. 인계자가 단위업무마다 입력한 정기 세부업무가 항목이다. "
-        "개요·시기·절차·중점 관리사항·의사결정 근거·협업관계·향후 과제·기타(참고자료 등)를 담는다(주요 협업관계는 별도 장 partners 의 표).",
+        "개요·시기·절차·중점 관리사항·의사결정 근거·협업관계·향후 과제·기타를 담는다(주요 협업관계는 별도 장 partners 의 표).",
         fields=(
             FieldSpec("name", "세부 업무명", "예: 월간 경영실적 보고 업무"),
             FieldSpec("unit", "단위업무명", "이 세부업무가 속한 단위업무", ask=ASK_HIDDEN),
@@ -205,7 +205,7 @@ SLOTS: tuple[SlotSpec, ...] = (
             FieldSpec("key_points", "중점 관리사항", "무엇을 중요하게 관리하고 주의해야 하는가?", gate=True, specific=True),
             FieldSpec("decisions", "주요 의사결정 및 판단 근거", "무엇을, 왜 그렇게 결정했는가?", gate=True, specific=True),
             FieldSpec("future", "향후 과제 및 발전 방향", "무엇을 이어가고 개선해야 하는가?", ask=ASK_AUX, gate=True),
-            FieldSpec("references", "기타(참고자료 등)", "어떤 자료와 규정을 참고해야 하는가?", ask=ASK_AUTO,
+            FieldSpec("references", "기타", "어떤 자료와 규정을 참고해야 하는가?", ask=ASK_AUTO,
                       placeholder="인수자가 참고할 좋은 노하우, 팁, 참고자료가 있다면 작성해 주세요."),
         ),
         min_items=1,
@@ -321,7 +321,7 @@ SLOTS: tuple[SlotSpec, ...] = (
         key="leave_tasks",
         title="세부 업무",
         description="부재 기간 중 대신 처리할 세부 업무. 인계자가 입력한 세부업무가 항목이다(장기휴가는 정기/비정기로 나누지 않는다). "
-        "일정·처리사항, 현재 진행 상태, 처리방법, 주의사항 및 후속조치, 참고자료를 담는다.",
+        "일정·처리사항, 현재 진행 상태, 처리방법, 주의사항 및 후속조치, 기타를 담는다.",
         fields=(
             FieldSpec("name", "세부 업무명", "예: 월간 경영실적 보고"),
             FieldSpec("task_type", "업무 유형", "예전 세션의 정기/비정기 구분(장기휴가는 나누지 않으므로 문서에 싣지 않음)", ask=ASK_HIDDEN),
@@ -329,7 +329,8 @@ SLOTS: tuple[SlotSpec, ...] = (
             FieldSpec("status", "현재 진행 상태", "현재 진행단계는 어느 정도이며, 다음 진행단계는 어떻게 되는가?", ask=ASK_AUX),
             FieldSpec("method", "업무 처리방법", "어떻게 처리하면 되는가?"),
             FieldSpec("cautions", "주의사항 및 후속조치", "조심할 점, 문제 발생 시 대응, 아직 끝나지 않은 일이 있는가?", ask=ASK_AUX, specific=True),
-            FieldSpec("references", "참고자료", "업무에 참고할 수 있는 자료가 어떤 것이 있는가?", ask=ASK_AUX, answers_only=True),
+            FieldSpec("references", "기타", "업무에 참고할 수 있는 자료가 어떤 것이 있는가?", ask=ASK_AUX,
+                      placeholder="인수자가 참고할 좋은 노하우, 팁, 참고자료가 있다면 작성해 주세요."),
         ),
         min_items=1,
         modes=(MODE_LEAVE,),

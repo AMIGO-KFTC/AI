@@ -236,7 +236,7 @@ def test_default_model_is_sonnet_and_sends_effort(kb, monkeypatch):
 
 def test_analysis_prompt_asks_for_reference_documents():
     """참고자료 필드는 자료에서 찾은 문서명으로 채우되, 없으면 짐작하지 않고 비운다고 안내한다."""
-    assert "'references'(기타(참고자료 등))" in ANALYSIS_SYSTEM
+    assert "'references'(기타)" in ANALYSIS_SYSTEM
     assert "짐작해서 쓰지 말고 빈 문자열" in ANALYSIS_SYSTEM
 
 
@@ -244,4 +244,4 @@ def test_reference_field_value_reaches_document(kb):
     agent = HandoverAgent(AgentConfig(llm_mode="claude", model="claude-opus-5-5", max_concurrency=1), client=FakeClient())
     agent.start("c2", PROFILE, kb)
     doc = agent.finish("c2", kb).snapshot["document"]
-    assert '<th>기타(참고자료 등)</th><td colspan="5">기타(참고자료 등) 값 1</td>' in doc  # 정기업무 카드는 협업관계 표(5열)를 품는 HTML 표
+    assert '<th>기타</th><td colspan="5">기타 값 1</td>' in doc  # 정기업무 카드는 협업관계 표(5열)를 품는 HTML 표
