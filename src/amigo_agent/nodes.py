@@ -62,8 +62,8 @@ from .template import (
     SLOT_BY_KEY,
     STAGE_LABEL,
     STAGE_NUMBER,
-    OFFICE_QUESTION,
-    OFFICE_SLOT,
+    OFFICE_PENDING,
+    OFFICE_PENDING_FOLLOW,
     has_seeds,
     is_office,
     profile_units,
@@ -77,7 +77,7 @@ logger = logging.getLogger(__name__)
 QUICK_REPLIES_QNA = ["모르겠어요 (건너뛰기)", "지금 문서 생성"]
 QUICK_REPLIES_CONFIRM = ["네, 맞아요", "수정할게요"]
 QUICK_REPLIES_YESNO = ["예", "아니요"]  # 예/아니요로 먼저 묻는 질문의 두 가지 선택지
-AUX_NOTE = "해당 사항이 없으실 경우 '이 질문 건너뛰기'를 클릭하여 넘어가세요."  # 보조질문(선택 질문) 안내(화면은 질문 왼편에 '선택 질문' 태그를 붙인다)
+AUX_NOTE = "해당 사항이 없으실 경우 '이 질문 건너뛰기'를 클릭하여 넘어가세요."  # 보조질문 안내(화면은 질문 왼편에 '보조질문' 태그를 붙인다)
 MAX_CONFIRM_ROUNDS = 2  # 정리한 내용과 한 번 고친 내용까지 확인을 묻고, 그다음 고침은 바로 반영
 # 정리한 내용이 맞는지 물었을 때 이렇게만 답하면 LLM 에 묻지 않고 바로 확정한다(빠른 답변 단추 포함).
 PLAIN_CONFIRMS = frozenset({"네", "네.", "네!", "예", "예.", "응", "넵", "넹", "맞아요", "맞아요.", "맞습니다", "맞습니다.", "네, 맞아요", "네 맞아요", "네, 맞아요.", "네 맞습니다", "네, 맞습니다", "그렇습니다", "확인", "확인했어요", "ok", "okay", "yes"})
@@ -271,6 +271,9 @@ def settle_items(spec: Any, profile: dict[str, Any], slot: dict[str, Any]) -> No
         items[:] = kept
     if spec.key == "dept_notes":
         _seed_dept_targets(spec, profile, items)
+    if spec.key == OFFICE_PENDING.key:
+        # 팀장 양식의 미결사항은 자료에서 만들지 않고 질의(<1> 있는지 → <2> 경과·조치)로만 산출한다(진행 중인 사업계획이 미결로 잘못 들어오지 않게)
+        items[:] = [it for it in items if it.get("origin") == "user"]
     slot["coverage"] = evaluate_coverage(spec, items)
 
 
@@ -441,17 +444,6 @@ def _empty_slot_gaps(profile: dict[str, Any], slots: dict[str, Any], active: lis
     return made
 
 
-def _office_gaps(profile: dict[str, Any], slots: dict[str, Any], gaps: list[Gap]) -> list[Gap]:
-    """팀장용 원내 양식: 목록별 질문은 하지 않고, 인수자에게 필요한 현안·주의점(암묵지)만 한 번 포괄적으로 묻는다. 답은 '기타 주요사항' 등 맞는 목록에 정리한다."""
-    if not is_office(profile) or any(g.get("slot") == OFFICE_SLOT.key for g in gaps):
-        return []
-    items = (slots.get(OFFICE_SLOT.key) or {}).get("items", [])
-    target = next((it for it in items if item_label(OFFICE_SLOT, it).startswith("15.")), items[-1] if items else None)
-    if target is None:
-        return []
-    return [_gap(OFFICE_SLOT, target["id"], "현안·미결사항·주의점(암묵지) 확인", OFFICE_QUESTION, field="content", aux=True)]
-
-
 def allowed_gap(gap: Gap, slots: dict[str, Any], profile: dict[str, Any]) -> bool:
     """엔진(모델)이 제안한 질문 중 양식의 묻는 칸에 맞는 것만 남긴다.
 
@@ -499,7 +491,6 @@ def collect_gaps(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str,
     gaps.extend(_missing_field_gaps(slots, active, gaps))  # 양식의 묻는 칸이 빈 채로 남지 않게 묻는다
     gaps.extend(_embedded_gaps(slots, active, gaps))  # 카드 안 표: 협업 유의사항·추진 경과 확인
     gaps.extend(_empty_slot_gaps(profile, slots, active, gaps))
-    gaps.extend(_office_gaps(profile, slots, gaps))
     ordered = open_gaps(gaps)
     try:  # 장마다 따로 만든 질문 후보에서 중복을 뺀다(순서는 아래에서 양식 순서로 정한다)
         _, drops = runtime.context.engine.plan_questions(profile, ordered)
@@ -628,7 +619,10 @@ def ask(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     if state.get("stage") != "qna":
         _stage("qna")
     ack = state.get("ack") or ""
-    content = (ack + "\n\n" if ack else "") + gap["question"]  # 장 이름은 메시지 meta 의 slot 으로 화면 태그에 표시되므로 본문 앞에 붙이지 않는다
+    # 직전 질문의 처리 결과('…은(는) '해당 없음'으로 기록했어요', 건너뜀 안내)는 다음 질문에 붙이지 않고 따로 보낸다(화면에서는 직전 질문의 대화에 남는다).
+    # 장 이름은 메시지 meta 의 slot 으로 화면 태그에 표시되므로 본문 앞에 붙이지 않는다
+    lead = ack if state.get("last_intent") == "reopen" else ""  # 고른 질문으로 이동했다는 안내는 그 질문 앞에 붙인다
+    content = (lead + "\n\n" if lead else "") + gap["question"]
     if gap.get("ask_for_document"):
         content += "\n\n📎 관련 자료(계약서·매뉴얼 등)가 있다면 파일로 올려 주셔도 됩니다."
     for g in gaps:
@@ -642,6 +636,7 @@ def ask(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
         meta.update(picker="period", choices=list(PERIOD_CHOICES), allow_files=False)
     if gap.get("aux"):
         meta.update(aux=True, aux_note=AUX_NOTE)
+    acked = [_say("info", ack)] if ack and not lead else []  # 직전 질문의 처리 결과를 질문보다 먼저 보낸다
     question = _say(
         "question",
         content,
@@ -651,7 +646,7 @@ def ask(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
         remaining=len(open_gaps(gaps)),
         **meta,
     )
-    return {"gaps": gaps, "current_gap_id": gap["id"], "question_count": count, "ack": "", "stage": "qna", "transcript": [question]}
+    return {"gaps": gaps, "current_gap_id": gap["id"], "question_count": count, "ack": "", "stage": "qna", "transcript": [*acked, question]}
 
 
 def wait_user(state: AgentState) -> dict[str, Any]:
@@ -673,10 +668,23 @@ def request_finish(state: AgentState, runtime: Runtime[AgentContext]) -> dict[st
 def skip_gap(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, Any]:
     gaps = copy.deepcopy(state.get("gaps") or [])
     current = state.get("current_gap_id")
-    for g in gaps:
-        if g["id"] == current and g.get("status") in ("asked", "open", "answered"):
-            g["status"] = "skipped"
     user = turn("user", "skip", "(건너뛰기)")
+    gap = next((g for g in gaps if g["id"] == current and g.get("status") in ("asked", "open", "answered")), None)
+    if gap is not None and gap.get("aux") and gap.get("field") and gap.get("item_id") and state.get("stage") != "review":
+        # 보조질문(해당 사항이 없으면 건너뛰라고 안내한 질문)을 건너뛰면 그 칸을 '해당 없음'으로 기록하고, 그 질문의 대화에 기록했다고 답한다
+        slots = copy.deepcopy(state.get("slots") or {})
+        item = find_item((slots.get(gap["slot"]) or {}).get("items", []), item_id=gap["item_id"])
+        spec = SLOT_BY_KEY[gap["slot"]]
+        gap["status"] = "resolved"
+        changed: dict[str, Any] = {}
+        if item is not None and not (gap.get("element") and str((item.get("fields") or {}).get(gap["field"]) or "").strip()):
+            changed = _record_value(runtime.context, state, gap, slots, "(건너뛰기)", NONE_VALUE)
+        # 칸 안의 세부사항만 물었으면(예: 수행 절차의 검토·승인 절차) 칸 값은 그대로 두고 그 세부사항을 '해당 없음'으로 안내한다
+        label = re.sub(r"^\((필수|보조)\)\s*", "", str(gap.get("element") or "")).strip() if not changed else ""
+        label = label or spec.label(gap["field"])
+        return {"gaps": gaps, "slots": changed, "pending": {}, "ack": f"'{label}'은(는) '{NONE_VALUE}'으로 기록했어요.", "last_intent": "skip", "transcript": [user]}
+    if gap is not None:
+        gap["status"] = "skipped"
     return {
         "gaps": gaps,
         "pending": {},
@@ -691,6 +699,17 @@ def route_after_skip(state: AgentState) -> Literal["choose_next", "wait_user"]:
 
 
 SKIP_ACK = "건너뛰었어요. '확인 필요 사항'으로 남겨 둘게요."
+REVIEW_ANSWER_RE = re.compile(r"^\[질문\]\s*(.+?)\n\[답변\]\s*(.*)$", re.S)  # 문서 화면에서 고른 질문의 답(FinalDocumentScreen.sendAnswer)
+
+
+def _review_answer_gap(gaps: list[Gap], text: str) -> Gap | None:
+    """'[질문] …\n[답변] …' 으로 온 답의 질문(아직 답을 기다리거나 건너뛴 질문 중 문장이 같은 것)."""
+    found = REVIEW_ANSWER_RE.match(text)
+    if not found:
+        return None
+    asked = " ".join(found.group(1).split())
+    waiting = [g for g in gaps if g.get("status") in ("open", "asked", "skipped")]
+    return next((g for g in waiting if asked in (" ".join(str(g.get("question") or "").split()), " ".join(str(g.get("description") or "").split()))), None)
 MOVING_ON_RE = re.compile(r"넘어가|다음 질문|건너뛰|건너뛸")
 REASK_HINT = "답하기 어려우시면 '모르겠어요'라고 하시거나 건너뛰기를 눌러 주세요."
 
@@ -716,6 +735,17 @@ def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
         open_gaps=open_gaps(gaps),
         transcript=list(state.get("transcript") or []),
     )
+    review_gap = _review_answer_gap(gaps, text) if stage == "review" else None
+    if review_gap is not None:
+        # 문서 화면 오른쪽 '시간 될 때 적어 주세요' 질문의 답: 그 질문을 이번 답의 대상으로 삼고, 반영하면 목록에서 내린다(노션 '추가 요구사항 정의' 23)
+        data.current_gap = review_gap
+        answer = REVIEW_ANSWER_RE.match(text).group(2).strip()
+        if review_gap.get("field") and review_gap.get("item_id") and is_none_answer(answer):
+            changed = _record_value(ctx, state, review_gap, slots, text, NONE_VALUE)
+            review_gap["status"] = "resolved"
+            note = _say("info", f"'{SLOT_BY_KEY[review_gap['slot']].label(review_gap['field'])}'은(는) '{NONE_VALUE}'으로 기록하고 문서를 다시 작성할게요.")
+            return {"last_intent": "confirm", "transcript": [user_turn, note], "gaps": gaps, "slots": changed, "doc_dirty": True}
+
     if stage != "review" and current and not pending and current.get("gate"):
         answered = _answer_gate(ctx, state, user_turn, current, gaps, slots, text)  # 예/아니요 선택지 답은 바로 처리한다
         if answered is not None:
@@ -727,6 +757,12 @@ def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
         picked = _answer_period(ctx, state, user_turn, current, gaps, slots, text)  # 고른 주기·기간은 바로 기록한다
         if picked is not None:
             return picked
+
+    if stage != "review" and current and not pending and not current.get("item_id") and not current.get("parent_id") and is_none_answer(text):
+        # 장 전체를 묻는 질문(팀장 양식의 미결사항 등)에 '없어요': 장을 '해당 없음'으로 두고 넘어간다
+        current["status"] = "resolved"
+        title = SLOT_BY_KEY[current["slot"]].title if current.get("slot") in SLOT_BY_KEY else "이 항목"
+        return {"last_intent": "confirm", "transcript": [user_turn], "gaps": gaps, "pending": {}, "ack": f"'{title}'은(는) '{NONE_VALUE}'으로 기록했어요."}
 
     if stage != "review" and current and not pending and current.get("field") and current.get("item_id") and is_none_answer(text):
         # '그런 것은 없어'처럼 해당하는 것이 없다는 답: 모델에 맡기지 않고 그 칸을 '해당 없음'으로 채운 뒤 다음 질문으로 넘어간다
@@ -788,6 +824,18 @@ def interpret(state: AgentState, runtime: Runtime[AgentContext]) -> dict[str, An
         for g in gaps:
             if g["id"] in resolved and g.get("status") in ("asked", "open"):
                 g["status"] = "answered"
+        if review_gap is not None:
+            review_gap["status"] = "answered"  # 건너뛰었던 질문이어도 답했으면 목록에서 내린다
+        if current and stage != "review" and current.get("slot") == OFFICE_PENDING.key and not current.get("item_id"):
+            # 팀장 양식 미결사항: <1> 답으로 생긴 미결 업무마다 <2>(경과·조치)를 이어서 묻는다. <1> 답에 상태가 섞여 경과가 채워졌어도 묻는다
+            asked_items = {g.get("item_id") for g in gaps if g.get("slot") == OFFICE_PENDING.key}
+            for slot_key, item_id in refs:
+                item = find_item((slots.get(slot_key) or {}).get("items", []), item_id=item_id)
+                if slot_key != OFFICE_PENDING.key or item is None or item_id in asked_items:
+                    continue
+                name = item_label(OFFICE_PENDING, item)
+                gaps.append(_gap(OFFICE_PENDING, item_id, f"'{name}'의 경과·처리대책 확인", f"'{name}'에 대해 여쭤볼게요.\n{OFFICE_PENDING_FOLLOW}", field="progress"))
+                asked_items.add(item_id)
         out.update(slots={k: slots[k] for k in {r[0] for r in refs}}, gaps=gaps)
         if stage == "review":
             out["transcript"].append(_say("info", result.reply or "말씀하신 내용을 반영해서 문서를 다시 작성할게요."))
@@ -937,7 +985,8 @@ def _apply_updates(ctx: AgentContext, state: AgentState, slots: dict, result: In
     refs: list[list[str]] = []
     for update in result.updates:
         slot_key = update["slot"]
-        if SLOT_BY_KEY[slot_key].seed == "office":  # 원내 양식의 목록 이름은 정해져 있어 답변으로 바꾸지 않는다(내용만 고친다)
+        if SLOT_BY_KEY[slot_key].seed in ("office", "plans", "issues"):
+            # 원내 양식의 목록 이름과 팀장이 고른 사업계획·현안 이름은 답변으로 바꾸지 않는다(내용만 고친다)
             update = {**update, "title": "" if update.get("item_id") else update.get("title", ""), "fields": {k: v for k, v in (update.get("fields") or {}).items() if k != "name"}}
         slot = slots.setdefault(slot_key, {"key": slot_key, "items": [], "coverage": "missing"})
         item = upsert_item(

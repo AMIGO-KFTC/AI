@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from .periods import months_to_period
+from .periods import span_to_period
 from .precedence import user_meta
 from .state import SlotState, apply_field, item_label
 from .template import SLOT_BY_KEY
@@ -28,7 +28,7 @@ def apply_gantt_edit(slots: dict[str, SlotState], name: str, nth: int, months: l
             if seen < nth:
                 seen += 1
                 continue
-            period = months_to_period(months)
+            period = span_to_period(months)
             item.get("fields", {}).pop("period", None)  # 직접 고친 값이 기존 값(같은 값이어도)을 확실히 대체한다
             (item.get("field_meta") or {}).pop("period", None)
             apply_field(item, "period", period or "해당 월 없음", user_meta(EDIT_LABEL))

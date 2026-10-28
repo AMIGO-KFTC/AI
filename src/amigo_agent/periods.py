@@ -146,3 +146,103 @@ def months_to_period(months: list[int] | set[int]) -> str:
         else:
             runs.append((month, month))
     return "; ".join(f"{a}월" if a == b else f"{a}월~{b}월" for a, b in runs)
+
+
+# ------------------------------------------------------------------ 해를 넘기는 계획기간(연·월)
+# 일정표는 보통 1~12월 한 해로 그리지만, '2026.12~2027.01'·'26년 12월~27년 1월'·'11월~2월'처럼 해를 넘기면
+# 1월과 12월이 따로 떨어진 막대로 보인다. 그래서 (연도, 월) 단위로도 읽어, 해를 넘기는 표는 연도 머리글을 붙여 이어진 막대로 그린다.
+_SHORT_YEAR = re.compile(r"(?<![\d.'’])['’]?(\d{2})\s*년")  # 26년 → 2026년
+_APOS_YEAR = re.compile(r"['’](\d{2})\s*[.\-/]\s*(?=\d{1,2}(?!\d))")  # '26.12 → 2026.12
+_YEAR_ONLY = re.compile(r"(?<!\d)(\d{4})\s*년")
+MAX_SPAN_MONTHS = 36  # 일정표가 너무 넓어지지 않게 최대 3년까지만 그린다
+
+YearMonth = tuple[int, int]
+
+
+def _normalize_years(raw: str) -> str:
+    raw = _APOS_YEAR.sub(lambda m: f"20{m.group(1)}.", raw)
+    return _SHORT_YEAR.sub(lambda m: f"20{m.group(1)}년", raw)
+
+
+def ym_index(ym: YearMonth) -> int:
+    return ym[0] * 12 + ym[1] - 1
+
+
+def ym_from_index(index: int) -> YearMonth:
+    return index // 12, index % 12 + 1
+
+
+def _ym_range(a: YearMonth, b: YearMonth) -> set[YearMonth]:
+    lo, hi = sorted((ym_index(a), ym_index(b)))
+    hi = min(hi, lo + MAX_SPAN_MONTHS - 1)
+    return {ym_from_index(i) for i in range(lo, hi + 1)}
+
+
+def _wrap_pivot(raw: str) -> int | None:
+    """'11월~2월'·'2026.11~2월'처럼 뒤 달이 앞 달보다 작은 구간이면 앞 달(그 달부터 그해, 그보다 작은 달은 다음 해)."""
+    if _YEAR_END_START.search(raw):
+        return 12
+    m = _BARE_RANGE.search(raw)
+    if m and int(m.group(1)) > int(m.group(2)):
+        return int(m.group(1))
+    tokens = sorted(
+        [(m.start(), int(m.group(2))) for m in _DATE_TOKEN.finditer(raw)]
+        + [(m.start(), int(m.group(1))) for m in _MONTH_TOKEN.finditer(raw) if not any(d.start() <= m.start() < d.end() for d in _DATE_TOKEN.finditer(raw))]
+    )
+    if len(tokens) >= 2 and _RANGE_SEP.search(raw[tokens[0][0] : tokens[-1][0]]) and tokens[-1][1] < tokens[0][1]:
+        return tokens[0][1]
+    return None
+
+
+def plan_span(text: str | None, base_year: int) -> tuple[set[YearMonth], bool]:
+    """계획기간 문장을 (연도, 월) 집합으로 읽는다. 두 번째 값은 '상시·매월'처럼 일정표 전체에 걸치는지.
+
+    연도가 없으면 base_year 로 보고, 뒤 달이 앞 달보다 작은 구간('11월~2월')은 다음 해로 넘어간 것으로 본다.
+    """
+    raw = _normalize_years(str(text or "").strip())
+    if not raw:
+        return set(), False
+    if ";" in raw:
+        spans, always = set(), False
+        for part in raw.split(";"):
+            found, all_year = plan_span(part, base_year)
+            spans |= found
+            always |= all_year
+        return spans, always
+    if ALWAYS_RE.search(raw):
+        return set(), True
+    dated = [(m.start(), int(m.group(1)), int(m.group(2))) for m in _DATE_TOKEN.finditer(raw) if _valid(int(m.group(2)))]
+    if len(dated) >= 2 and _RANGE_SEP.search(raw[dated[0][0] : dated[-1][0]]) and dated[-1][1] != dated[0][1]:
+        # 연도가 다른 두 날짜 사이 구간: 그 사이 모든 달
+        spans = _ym_range((dated[0][1], dated[0][2]), (dated[-1][1], dated[-1][2]))
+        return spans | {(y, m) for _, y, m in dated[1:-1]}, False
+    months = plan_months(raw)
+    if not months:
+        return set(), False
+    years = [int(m.group(1)) for m in _YEAR_ONLY.finditer(raw)] + [y for _, y, _ in dated]
+    pivot = _wrap_pivot(raw)
+    year = min(years) if years else base_year
+    if pivot is not None and years and len(set(years)) == 1 and dated and dated[0][2] < pivot:
+        year -= 1  # '12월~2027.01'처럼 연도가 뒤쪽 달에만 붙은 경우
+    if pivot is None:
+        return {(year, m) for m in months}, False
+    return {(year if m >= pivot else year + 1, m) for m in months}, False
+
+
+def span_to_period(values: list[int]) -> str:
+    """일정표에서 고친 칸 목록을 계획기간 문장으로 되돌린다. 1~12 는 달(months_to_period), 그보다 크면 YYYYMM(해를 넘기는 표)."""
+    if all(1 <= v <= 12 for v in values):
+        return months_to_period(values)
+    indexes = sorted({ym_index((v // 100, v % 100)) for v in values if _valid(v % 100)})
+    runs: list[tuple[int, int]] = []
+    for index in indexes:
+        if runs and index == runs[-1][1] + 1:
+            runs[-1] = (runs[-1][0], index)
+        else:
+            runs.append((index, index))
+
+    def label(index: int) -> str:
+        y, m = ym_from_index(index)
+        return f"{y}.{m:02d}"
+
+    return "; ".join(label(a) if a == b else f"{label(a)}~{label(b)}" for a, b in runs)

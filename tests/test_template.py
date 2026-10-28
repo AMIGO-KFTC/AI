@@ -23,7 +23,7 @@ def asks(slot_key):
 
 def test_two_versions_have_their_own_chapters_in_template_order():
     # [인사발령] A 업무 단위 요약 → B 정기업무(+협업 표) → C 비정기 업무(+추진 경과·협업 표) → D 기타 자료(시스템 접근 권한 · 부서별 추가 자료)
-    assert keys(PROFILE) == ["overview", "regular", "partners", "irregular", "milestones", "stakeholders", "systems", "dept_notes"]
+    assert keys(PROFILE) == ["overview", "regular", "partners", "irregular", "milestones", "stakeholders", "systems"]  # 부서별 추가 자료는 분석하지 않는다(파일만 올림)
     # [장기휴가] A 세부 업무 → B 주요 연락망 → C 기타 자료(시스템 접근 권한)
     assert keys(LEAVE) == ["leave_tasks", "contacts", "systems"]
     assert mode_of({}) != MODE_LEAVE and mode_of({"mode": "LEAVE"}) == MODE_LEAVE
@@ -52,19 +52,19 @@ def test_each_field_has_the_ask_type_of_the_notion_checklist():
     assert irregular.field("key_points").ask == ASK_AUX and irregular.field("key_points").specific
     # D. 기타 자료: 시스템 접근 권한은 묻지 않고, 부서별 추가 자료는 관리 내용을 묻는다
     assert {f.ask for f in SLOT_BY_KEY["systems"].fields} == {ASK_AUTO}
-    assert SLOT_BY_KEY["dept_notes"].field("detail").ask == ASK_MAIN and SLOT_BY_KEY["dept_notes"].empty_ask == ASK_MAIN
+    assert SLOT_BY_KEY["dept_notes"].field("detail").ask == ASK_AUTO and not SLOT_BY_KEY["dept_notes"].empty_ask  # 부서별 추가 자료는 묻지 않는다
     assert SLOT_BY_KEY["systems"].group == SLOT_BY_KEY["dept_notes"].group == "기타 자료"
     # 장기휴가 A: 업무유형 미질의, 진행 상태는 비정기 필수·정기 보조, 주의사항·참고자료 보조(참고자료는 질의응답으로만)
     leave = SLOT_BY_KEY["leave_tasks"]
-    assert leave.field("task_type").ask == ASK_AUTO
-    assert leave.ask_of("status", {"task_type": "비정기"}) == ASK_MAIN and leave.ask_of("status", {"task_type": "정기"}) == ASK_AUX
+    assert leave.field("task_type").ask == ASK_HIDDEN  # 장기휴가는 정기/비정기로 나누지 않아 문서에 싣지 않는다
+    assert leave.ask_of("status", {"task_type": "비정기"}) == ASK_AUX and leave.ask_of("status", {}) == ASK_AUX
     assert leave.field("cautions").ask == ASK_AUX and leave.field("references").answers_only
     # 장기휴가 B 주요 연락망: 보조질문(비어 있을 때만)
     assert SLOT_BY_KEY["contacts"].empty_ask == ASK_AUX
 
 
 def test_unit_summary_table_columns():
-    assert labels("overview") == ["단위업무명", "계획기간", "진행상황 요약"]
+    assert labels("overview") == ["단위업무명", "계획기간", "비고"]  # 진행상황 요약 → 비고(내용은 진행상황 요약)
     assert SLOT_BY_KEY["overview"].layout == "gantt" and SLOT_BY_KEY["overview"].evidence is False  # 월별 막대, 근거 없음
 
 
@@ -93,7 +93,7 @@ def test_irregular_project_items_match_the_template_and_tables():
 
 
 def test_leave_detail_items_match_the_template():
-    assert labels("leave_tasks")[1:] == ["업무 유형", "주요 일정 및 처리사항", "현재 진행 상태", "업무 처리방법", "주의사항 및 후속조치", "참고자료"]
+    assert labels("leave_tasks")[1:] == ["주요 일정 및 처리사항", "현재 진행 상태", "업무 처리방법", "주의사항 및 후속조치", "참고자료"]
     assert SLOT_BY_KEY["leave_tasks"].field("schedule").hint == "부재 기간 중 언제, 무엇을 처리해야 하는가?"  # 템플릿의 핵심 질문
 
 
@@ -109,7 +109,7 @@ def test_project_status_is_required_only_for_irregular_tasks():
     base = {"name": "정산", "schedule": "매월 말", "method": "절차", "cautions": "주의", "references": "매뉴얼"}
     assert missing_fields(spec, {"fields": {**base, "task_type": "정기"}}) == []  # 정기 업무의 진행 상태는 보조질문
     assert missing_fields(spec, {"fields": {**base, "task_type": "정기"}}, aux=True) == ["status"]
-    assert missing_fields(spec, {"fields": {**base, "task_type": "비정기"}}) == ["status"]
+    assert missing_fields(spec, {"fields": {**base, "task_type": "비정기"}}) == []  # 정기/비정기와 상관없이 보조질문
 
 
 def test_units_from_the_giver_become_items():
@@ -118,7 +118,7 @@ def test_units_from_the_giver_become_items():
     assert seed_items(SLOT_BY_KEY["overview"], profile) == [{"name": "공동망 운영"}]
     assert seed_items(SLOT_BY_KEY["regular"], profile) == [{"name": "차액 정산", "unit": "공동망 운영"}]
     leave = {**LEAVE, "units": [{"name": "", "regular": ["월간 보고"], "irregular": ["시스템 개편"]}]}
-    assert seed_items(SLOT_BY_KEY["leave_tasks"], leave) == [{"name": "월간 보고", "task_type": "정기"}, {"name": "시스템 개편", "task_type": "비정기"}]
+    assert seed_items(SLOT_BY_KEY["leave_tasks"], leave) == [{"name": "월간 보고"}, {"name": "시스템 개편"}]
 
 
 def test_system_access_slot_is_shared_and_keeps_passwords_blank():
@@ -151,9 +151,9 @@ def test_full_version_document_follows_the_template_chapters():
     doc = agent.finish("full1", kb).snapshot["document"]
     headings = [line for line in doc.splitlines() if line.startswith("## ")]
     # 협업관계·추진 경과는 별도 장이 아니라 각 카드 안에, 시스템 접근 권한·부서별 추가 자료는 '기타 자료' 아래 소제목으로 들어간다
-    assert headings[:4] == ["## 1. 업무 단위 요약 + 일정 명세표", "## 2. 정기업무", "## 3. 비정기 업무(프로젝트성)", "## 4. 기타 자료"]
-    assert "### 시스템 접근 권한" in doc and "### 부서별 추가 자료" in doc
-    assert '<th colspan="12">계획기간</th>' in doc and "<th>1월</th>" in doc and '<th rowspan="2">진행상황 요약</th>' in doc  # 월별 일정표, 머리글 2행
+    assert headings[:4] == ["## 1. 업무 단위별 일정 명세표", "## 2. 주요 내용", "## 3. 기타 자료"]
+    assert "### 시스템 접근 권한" in doc and "### 부서별 추가 자료" not in doc  # 팀 인수인계 목록이 있을 때만(파일만 올림)
+    assert '<th colspan="12">계획기간</th>' in doc and "<th>1월</th>" in doc and '<th rowspan="2">비고</th>' in doc  # 월별 일정표, 머리글 2행
     assert "<th>업무 개요</th>" in doc and "<th>수행 시기</th>" in doc
 
 
@@ -217,18 +217,44 @@ def test_collaboration_tables_leave_out_the_givers_own_team():
     assert [it["id"] for it in slot["items"]] == ["p2"]  # 같은 팀은 협업관계 표에 넣지 않는다
 
 
-def test_team_lead_handover_uses_the_office_form_and_asks_once():
-    from amigo_agent.template import OFFICE_ITEMS
+def test_team_lead_handover_uses_the_manager_form():
+    """관리자(팀장) 인사발령 양식(노션 '추가 요구사항 정의' 5): 1 사업계획 → 2 현안 → 3 제계약서 → 4 미결 → 5~15 → 해당 팀만 16."""
+    from amigo_agent.template import OFFICE_ITEMS, OFFICE_SLOT
 
-    profile = {**PROFILE, "form": "office"}
-    assert keys(profile) == ["office_items"]
+    profile = {**PROFILE, "form": "office", "plans": ["은행 공동 본인확인 플랫폼 구축 추진", "대고객 마케팅 플랫폼 구축 추진"],
+               "issues": ["은행 공동 본인확인 플랫폼 구축 추진", "인증서 발급 채널 혁신"],
+               "dept_notes": {"department": "IT아미고팀", "items": ["대리점 운영 현황", "판매 실적 현황"], "note": ""},
+               "dept_uploads": {"판매 실적 현황": ["판매실적_2026.xlsx"]}}
+    assert keys(profile) == ["office_plans", "office_issues", "office_pending", "office_items"]
     agent = HandoverAgent()
     snap = agent.start("office1", profile, FakeKB()).snapshot
-    assert [it["title"] for it in snap["slots"]["office_items"]["items"]] == [name for name, _ in OFFICE_ITEMS]  # 8~10번은 생략
-    assert len(snap["gaps"]) == 1 and snap["gaps"][0]["aux"]  # 암묵지는 한 번만 포괄적으로 묻는다
+    assert [it["title"] for it in snap["slots"]["office_plans"]["items"]] == profile["plans"]  # 1번 행은 고른 사업계획
+    assert [it["title"] for it in snap["slots"]["office_issues"]["items"]] == profile["issues"]  # 2번은 고른 현안(직접 추가 포함)
+    assert [it["title"] for it in snap["slots"]["office_items"]["items"]] == [name for name, _ in OFFICE_ITEMS]  # 3번, 5~15번(8~10번 포함)
+    asked = {g["slot"] for g in snap["gaps"]}
+    assert asked <= {"office_plans", "office_issues", "office_pending"} and "office_items" not in asked  # 1·2·4번만 묻는다
+    issue_questions = [g["question"] for g in snap["gaps"] if g["slot"] == "office_issues"]
+    assert any("지금까지 어떤 진행 경과가 있었나요?" in q for q in issue_questions) and any("후임 관리자가 특별히 알아야 할 사항이 있나요?" in q for q in issue_questions)
+    pending = [g for g in snap["gaps"] if g["slot"] == "office_pending"]
+    assert len(pending) == 1 and pending[0]["question"].startswith("현재까지 처리되지 않았거나")  # <1> 미결 업무가 있는지
     doc = agent.finish("office1", FakeKB()).snapshot["document"]
-    assert "## 1. 원내 인수인계서 양식" in doc and "| 목록 | 내용 | 비고 |" in doc and "| 5. 중요 인장 보관 명세표 | - | 인장명, 인영, 보관자 직책·성명 |" in doc
-    assert "정기업무" not in doc and "원내 양식(팀장)" in doc
+    headings = [line for line in doc.splitlines() if line.startswith("## ")]
+    assert headings[:4] == ["## 1. 주요 사업계획 및 집행상황표", "## 2. 주요 현안사항", "## 3. 제계약서 명세표", "## 4. 주요 미결사항의 경과 및 처리대책"]
+    assert headings[4:] == [f"## {name}" for name, _ in OFFICE_ITEMS[1:]] + ["## 16. 부서·팀(반, 사무소)별 추가자료"]
+    assert "<th rowspan=\"2\">주요 사업계획</th>" in doc and "<th rowspan=\"2\">비고</th>" in doc  # 단위업무명 → 주요 사업계획, 진행상황 요약 → 비고
+    assert "### 1) 은행 공동 본인확인 플랫폼 구축 추진" in doc and "**가. 개요**" in doc and "**다. 고려사항**" in doc
+    assert "| 대리점 운영 현황 | 자료 등록 필요 |" in doc and "| 판매 실적 현황 | 등록됨: 판매실적_2026.xlsx |" in doc
+    assert "## 5. 중요 인장 보관 명세표\n\n□ 해당 없음  \n" in doc and "※" not in doc and "보관자 직책·성명" not in doc  # 비고는 문서에 싣지 않는다
+    assert "인장명, 인영, 보관자 직책·성명" in OFFICE_SLOT.description and "원내 양식(팀장)" in doc and "정기업무" not in doc
+
+
+def test_manager_form_without_dept_list_has_no_section_16():
+    from datetime import date
+
+    from amigo_agent import render_document
+
+    md = render_document(profile={"form": "office", "plans": ["A 사업"]}, slots={}, gaps=[], sources=[], version=1, today=date(2026, 10, 28))
+    assert "16. 부서" not in md and "| 주요 사업계획 | A 사업 |" in md
 
 
 def test_leave_contacts_leave_out_the_givers_own_team():
@@ -250,3 +276,28 @@ def test_regular_references_show_a_faded_hint_when_empty():
     slots["regular"]["items"] = [{"id": "r1", "title": "월간 보고", "fields": {"name": "월간 보고"}, "citations": []}]
     md = render_document(profile={"name": "김민수"}, slots=slots, gaps=[], sources=[], version=1, today=date(2026, 10, 25))
     assert '<span class="doc-hint">인수자가 참고할 좋은 노하우, 팁, 참고자료가 있다면 작성해 주세요.</span>' in md
+
+
+def test_manager_form_keeps_dates_and_asks_pending_items():
+    from datetime import date
+
+    from amigo_agent import render_document
+    from amigo_agent.nodes import settle_items
+
+    slot = {"items": [{"id": "p1", "title": "사업 A", "fields": {"name": "사업 A"}, "origin": "document"}, {"id": "p2", "title": "대금 지급", "fields": {"name": "대금 지급"}, "origin": "user"}]}
+    settle_items(SLOT_BY_KEY["office_pending"], {"form": "office"}, slot)
+    assert [it["id"] for it in slot["items"]] == ["p2"]  # 미결사항은 자료에서 만들지 않고 질의 답으로만
+    issues = {"items": [{"id": "i1", "title": "현안", "fields": {"name": "현안", "progress": "2026.03 착수함 / 1. 2026.06 1차 오픈함"}}]}
+    md = render_document(profile={"form": "office"}, slots={"office_issues": issues}, gaps=[], sources=[], version=1, today=date(2026, 10, 28))
+    assert "□ 2026.03 착수함  " in md and "□ 2026.06 1차 오픈함  " in md
+
+
+def test_manager_form_keeps_selected_names_on_answers():
+    from amigo_agent.nodes import _apply_updates
+    from amigo_agent.engine import Interpretation
+
+    slots = {"office_issues": {"key": "office_issues", "items": [{"id": "i1", "title": "AMIGO 고도화", "fields": {"name": "AMIGO 고도화"}, "citations": []}]}}
+    update = {"slot": "office_issues", "item_id": "i1", "title": "AMIGO 17개 팀 적용 지연 우려", "fields": {"name": "AMIGO 17개 팀 적용 지연 우려", "progress": "협의 중"}, "citations": []}
+    _apply_updates(None, {"profile": {"form": "office"}}, slots, Interpretation(intent="answer", updates=[update]), "답", None)
+    item = slots["office_issues"]["items"][0]
+    assert item["title"] == "AMIGO 고도화" and item["fields"]["name"] == "AMIGO 고도화"

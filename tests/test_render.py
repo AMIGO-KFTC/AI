@@ -41,24 +41,24 @@ def test_render_marks_citations_next_to_the_text_and_leaves_out_pending_and_evid
     assert "| 인계자 | 김민수 과장 |" in md
     assert "2026-10-04 · AMIGO 자동 작성 초안 v3" in md
     # 근거 문장과 겹치는 칸이 없으면 항목 이름 뒤에 번호를 단다. 같은 근거는 같은 번호
-    assert "| CMS [1] | 게시물 \\| 승인 | - | 전자결재 / 신청 | ID: ________ / PW: ________ |" in md
+    assert "| CMS [1] | 게시물 \\| 승인 | - | 전자결재<br>신청 | ID: ________ / PW: ________ |" in md
     assert "| GA [1] | - | - | - | ID: ________ / PW: ________ |" in md
     # 양식에 없는 장(확인 필요 사항·근거 자료)과 근거 열은 문서에 싣지 않는다(화면의 오른쪽 패널·번호 팝업에서 본다)
     assert "확인 필요 사항" not in md and "근거 자료" not in md and "| 근거 |" not in md and "GA 신청 방법 없음" not in md
     # 일정 명세표 위에는 화면에서만 보이는 회색 작성 안내(doc-guide)가 붙는다
-    assert '## 1. 업무 단위 요약 + 일정 명세표\n\n<span class="doc-guide">실제 업무 추진 현황 및 예상일정을 막대 그래프로 나타내주세요</span>\n\n확인된 내용이 없습니다.' in md
+    assert '## 1. 업무 단위별 일정 명세표\n\n<span class="doc-guide">실제 업무 추진 현황 및 예상일정을 막대 그래프로 나타내주세요</span>\n\n확인된 내용이 없습니다.' in md
 
 
 def test_unit_summary_draws_connected_bars_without_evidence_column():
     slots = empty_slots()
     slots["overview"]["items"] = [
         {"id": "o1", "title": "공동망 운영", "fields": {"name": "공동망 운영", "period": "3월~5월", "note": "상시 점검"}, "citations": [CITE]},
-        {"id": "o2", "title": "40년사 발간 추진", "fields": {"name": "40년사 발간 추진", "period": "2026.10 ~ 2027.01"}, "citations": [CITE]},
+        {"id": "o2", "title": "40년사 발간 추진", "fields": {"name": "40년사 발간 추진", "period": "2026.10 ~ 2026.12"}, "citations": [CITE]},
         {"id": "o3", "title": "통계시스템", "fields": {"name": "통계시스템", "period": "미정"}, "citations": [CITE]},
         {"id": "o4", "title": "정기 점검", "fields": {"name": "정기 점검", "period": "1·4·7·10월"}, "citations": [CITE]},
     ]
     md = render(slots)
-    (table,) = [t for t in html_tables(md) if t and texts(t[0]) == ["단위업무명", "계획기간", "진행상황 요약"]]
+    (table,) = [t for t in html_tables(md) if t and texts(t[0]) == ["단위업무명", "계획기간", "비고"]]
     # 머리글 2행: '단위업무명 | 계획기간(1~12월 위로 병합) | 진행상황 요약' 아래에 1~12월. 근거 열이 없다
     assert [c["colspan"] for c in table[0]] == [1, 12, 1] and texts(table[1]) == [f"{m}월" for m in range(1, 13)]
     rows = {r[0]["text"]: r for r in table[2:]}
@@ -72,7 +72,7 @@ def test_unit_summary_draws_connected_bars_without_evidence_column():
         return out
 
     assert bars("공동망 운영") == [(3, 3)]  # 3·4·5월이 끊김 없이 한 막대
-    assert bars("40년사 발간 추진") == [(1, 1), (10, 3)]  # 10~12월은 한 막대, 해를 넘긴 1월은 따로
+    assert bars("40년사 발간 추진") == [(10, 3)]  # 10~12월은 한 막대(해를 넘기는 표는 test_periods 에서 본다)
     assert bars("통계시스템") == [] and rows["통계시스템"][-1]["text"] == "계획기간: 미정"  # 월로 읽을 수 없으면 원문을 마지막 열(진행상황 요약)에
     assert bars("정기 점검") == [(1, 1), (4, 1), (7, 1), (10, 1)]  # 떨어진 달은 이어 붙이지 않는다
     assert all(sum(c["colspan"] for c in r) == 14 for r in table[2:]) and sum(c["colspan"] for c in table[0]) == 14  # 어느 행이든 14칸(이름·12개월·진행상황 요약)
@@ -138,7 +138,7 @@ def test_rows_without_projects_are_not_shown():
     slots = empty_slots()
     collab(slots, "재무팀", "홈페이지 리뉴얼", role="예산 협의")
     md = render(slots)
-    assert "## 3. 비정기 업무(프로젝트성)\n\n확인된 내용이 없습니다." in md and "예산 협의" not in md  # 양식에 없는 표로 싣지 않는다
+    assert "#### 나. 비정기 업무\n\n확인된 내용이 없습니다." in md and "예산 협의" not in md  # 양식에 없는 표로 싣지 않는다
 
 
 def test_leave_version_follows_template_a_b_c():
@@ -166,10 +166,10 @@ def test_leave_version_follows_template_a_b_c():
 
 def test_system_access_is_left_blank_for_handwriting_when_missing():
     md = render(empty_slots())
-    part = md.split("## 4. 기타 자료")[1]
+    part = md.split("## 3. 기타 자료")[1]
     guide = '<span class="doc-guide">시스템 접근 권한이 있을 경우 해당 내용을 작성해주세요.</span>'  # 화면에서만 보이는 회색 안내
     assert part.startswith(f"\n\n### 시스템 접근 권한\n\n{guide}\n\n| 시스템 |") and "AMIGO에게 요청" not in part
-    assert "| - | - | - | - | - |" in part and "### 부서별 추가 자료" in part
+    assert "| - | - | - | - | - |" in part and "### 부서별 추가 자료" not in part  # 팀 인수인계 목록이 없으면 부서별 추가 자료는 싣지 않는다
 
 
 def test_plan_months_reads_common_period_notations():
@@ -207,5 +207,53 @@ def test_citation_number_goes_right_after_the_field_it_supports_and_internal_ids
     slots["regular"]["items"] = [{"id": "r1", "title": "게시물 점검", "citations": [cite],
         "fields": {"name": "게시물 점검", "overview": "주간 점검(E10)", "key_points": "부서장 승인 후 게시해야 합니다"}}]
     md = render(slots)
-    assert '<th>중점 관리사항</th><td colspan="5">부서장 승인 후 게시해야 합니다 [1]</td>' in md and "### 1) 게시물 점검\n" in md
+    assert '<th>중점 관리사항</th><td colspan="5">부서장 승인 후 게시해야 합니다 [1]</td>' in md and "##### ① 게시물 점검\n" in md
     assert '<th>업무 개요</th><td colspan="5">주간 점검</td>' in md and "(E10)" not in md
+
+
+def test_main_contents_group_detail_tasks_under_their_unit():
+    """노션 '추가 요구사항 정의' 16: 2. 주요 내용 → A. 단위업무 → 1) 정기업무 / 2) 비정기 업무 → 가. 세부업무."""
+    profile = {"name": "김민수", "units": [{"name": "자금세탁방지제도 운영", "regular": ["위험평가"], "irregular": ["모니터링 개선 기획"]}, {"name": "공동망 운영", "regular": ["장애 대응"], "irregular": []}]}
+    slots = empty_slots()
+    slots["regular"]["items"] = [
+        {"id": "r1", "title": "위험평가", "fields": {"name": "위험평가", "unit": "자금세탁방지제도 운영"}, "citations": []},
+        {"id": "r2", "title": "장애 대응", "fields": {"name": "장애 대응", "unit": "공동망 운영"}, "citations": []},
+    ]
+    slots["irregular"]["items"] = [{"id": "p1", "title": "모니터링 개선 기획", "fields": {"name": "모니터링 개선 기획", "unit": "자금세탁방지제도 운영"}, "citations": []}]
+    md = render_document(profile=profile, slots=slots, gaps=[], sources=[], version=1, today=date(2026, 10, 28))
+    heads = [line for line in md.splitlines() if line.startswith("#")][1:]
+    assert heads[:9] == [
+        "## 1. 업무 단위별 일정 명세표", "## 2. 주요 내용",
+        "### A. 자금세탁방지제도 운영", "#### 가. 정기업무", "##### ① 위험평가", "#### 나. 비정기 업무", "##### ① 모니터링 개선 기획",
+        "### B. 공동망 운영", "#### 가. 정기업무",
+    ]
+    assert "##### ① 장애 대응" in md and "## 3. 기타 자료" in md
+
+
+def test_sentences_in_a_cell_are_split_by_line_breaks():
+    """노션 '추가 요구사항 정의': 새 문장은 ' / ' 대신 줄바꿈으로(표 칸 안에서는 <br>). 월별 일정표 칸은 그대로 둔다."""
+    slots = empty_slots()
+    slots["regular"]["items"] = [{"id": "r1", "title": "보고", "fields": {"name": "보고", "procedure": "1. 요청 / 2. 검토\n3. 보고"}, "citations": []}]
+    slots["overview"]["items"] = [{"id": "o1", "title": "공동망", "fields": {"name": "공동망", "period": "3월~5월", "note": "A 완료 / B 예정"}}]
+    md = render(slots)
+    assert "1. 요청<br>2. 검토<br>3. 보고" in md and " / 2. 검토" not in md
+    assert "<td>A 완료 / B 예정</td></tr>" in md
+
+
+def test_single_numbered_item_drops_its_number():
+    """노션 '추가 요구사항 정의' 17: 번호 목록 항목이 하나뿐이면 '1.'을 붙이지 않는다(둘 이상이면 그대로)."""
+    slots = empty_slots()
+    slots["regular"]["items"] = [
+        {"id": "r1", "title": "위험평가", "fields": {"name": "위험평가", "key_points": "1. 수검부서와의 협의 과정 운영: 자율성 존중", "procedure": "1. 요청 / 2. 검토"}, "citations": []}
+    ]
+    md = render(slots)
+    assert "<th>중점 관리사항</th><td colspan=\"5\">수검부서와의 협의 과정 운영: 자율성 존중</td>" in md and "1. 요청<br>2. 검토" in md
+
+
+def test_team_lead_leave_uses_the_staff_form():
+    """관리자용 6: 팀장의 장기휴가는 실무자와 같은 양식(세부 업무 · 주요 연락망 · 기타 자료)."""
+    from amigo_agent.template import slots_for
+
+    assert [s.key for s in slots_for({"form": "office", "mode": "leave"})] == ["leave_tasks", "contacts", "systems"]
+    md = render_document(profile={"form": "office", "mode": "leave"}, slots={}, gaps=[], sources=[], version=1, today=date(2026, 10, 28))
+    assert "## 1. 세부 업무" in md and "원내 양식" not in md
