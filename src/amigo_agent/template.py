@@ -79,7 +79,7 @@ class SlotSpec:
     group: str = ""  # 여러 장을 한 장 제목 아래 소제목으로 묶는다(기타 자료)
     split_field: str = ""  # 표를 이 필드 값(외부/내부)으로 나눠 싣는다
     split_drop: tuple[tuple[str, tuple[str, ...]], ...] = ()  # 나눈 표마다 뺄 열(내부 표에는 연락처 열이 없다)
-    muted_note: str = ""  # 문서에서 이 장 위에 흐리게 보이는 안내(시스템 접근 권한: 있을 때만 작성)
+    muted_note: str = ""  # 화면에서만 이 장 위에 회색으로 보이는 작성 안내(내려받기·전송·챗봇 자료에서는 빠진다)
     # 받는 장의 항목마다 한 번 묻는 예/아니요 질문(협업 유의사항). 예면 follow_question 으로 묻는다. {name} = 받는 장의 항목 이름
     gate_question: str = ""
     follow_question: str = ""
@@ -177,6 +177,7 @@ SLOTS: tuple[SlotSpec, ...] = (
         layout="gantt",
         evidence=False,
         seed="units",
+        muted_note="실제 업무 추진 현황 및 예상일정을 막대 그래프로 나타내주세요",
     ),
     # ------------------------------------------------------------------ [인사발령] B
     SlotSpec(
@@ -371,6 +372,7 @@ SLOTS: tuple[SlotSpec, ...] = (
         default_question="업무에 사용하는 시스템과, 인수자가 권한을 받으려면 어떻게 신청해야 하는지 알려 주시겠어요?\n(ID/PW 는 적지 마세요)",
         handwritten=("ID / PW (수기 기재)",),
         group=OTHER_MATERIALS,
+        muted_note="시스템 접근 권한이 있을 경우 해당 내용을 작성해주세요.",
     ),
     # ------------------------------------------------------------------ [인사발령] 기타 자료 — 그 밖의 자료(부서별 추가 자료)
     SlotSpec(
