@@ -138,7 +138,7 @@ def test_rows_without_projects_are_not_shown():
     slots = empty_slots()
     collab(slots, "재무팀", "홈페이지 리뉴얼", role="예산 협의")
     md = render(slots)
-    assert "#### 2) 비정기 업무\n\n확인된 내용이 없습니다." in md and "예산 협의" not in md  # 양식에 없는 표로 싣지 않는다
+    assert "#### 나. 비정기 업무\n\n확인된 내용이 없습니다." in md and "예산 협의" not in md  # 양식에 없는 표로 싣지 않는다
 
 
 def test_leave_version_follows_template_a_b_c():
@@ -169,7 +169,7 @@ def test_system_access_is_left_blank_for_handwriting_when_missing():
     part = md.split("## 3. 기타 자료")[1]
     guide = '<span class="doc-guide">시스템 접근 권한이 있을 경우 해당 내용을 작성해주세요.</span>'  # 화면에서만 보이는 회색 안내
     assert part.startswith(f"\n\n### 시스템 접근 권한\n\n{guide}\n\n| 시스템 |") and "AMIGO에게 요청" not in part
-    assert "| - | - | - | - | - |" in part and "### 부서별 추가 자료" in part
+    assert "| - | - | - | - | - |" in part and "### 부서별 추가 자료" not in part  # 팀 인수인계 목록이 없으면 부서별 추가 자료는 싣지 않는다
 
 
 def test_plan_months_reads_common_period_notations():
@@ -207,7 +207,7 @@ def test_citation_number_goes_right_after_the_field_it_supports_and_internal_ids
     slots["regular"]["items"] = [{"id": "r1", "title": "게시물 점검", "citations": [cite],
         "fields": {"name": "게시물 점검", "overview": "주간 점검(E10)", "key_points": "부서장 승인 후 게시해야 합니다"}}]
     md = render(slots)
-    assert '<th>중점 관리사항</th><td colspan="5">부서장 승인 후 게시해야 합니다 [1]</td>' in md and "##### 가. 게시물 점검\n" in md
+    assert '<th>중점 관리사항</th><td colspan="5">부서장 승인 후 게시해야 합니다 [1]</td>' in md and "##### ① 게시물 점검\n" in md
     assert '<th>업무 개요</th><td colspan="5">주간 점검</td>' in md and "(E10)" not in md
 
 
@@ -224,10 +224,10 @@ def test_main_contents_group_detail_tasks_under_their_unit():
     heads = [line for line in md.splitlines() if line.startswith("#")][1:]
     assert heads[:9] == [
         "## 1. 업무 단위별 일정 명세표", "## 2. 주요 내용",
-        "### A. 자금세탁방지제도 운영", "#### 1) 정기업무", "##### 가. 위험평가", "#### 2) 비정기 업무", "##### 가. 모니터링 개선 기획",
-        "### B. 공동망 운영", "#### 1) 정기업무",
+        "### A. 자금세탁방지제도 운영", "#### 가. 정기업무", "##### ① 위험평가", "#### 나. 비정기 업무", "##### ① 모니터링 개선 기획",
+        "### B. 공동망 운영", "#### 가. 정기업무",
     ]
-    assert "##### 가. 장애 대응" in md and "## 3. 기타 자료" in md
+    assert "##### ① 장애 대응" in md and "## 3. 기타 자료" in md
 
 
 def test_sentences_in_a_cell_are_split_by_line_breaks():

@@ -512,7 +512,8 @@ def slots_for(profile: dict[str, Any] | None) -> tuple[SlotSpec, ...]:
     if is_office(profile):
         return OFFICE_SLOTS
     mode = mode_of(profile)
-    return tuple(s for s in SLOTS if mode in s.modes)
+    # 부서별 추가 자료는 분석·질문하지 않고 인계자가 항목별로 파일만 올린다(render 가 업로드 표로 그린다, 노션 '추가 요구사항 정의')
+    return tuple(s for s in SLOTS if mode in s.modes and s.key != "dept_notes")
 
 
 def is_office(profile: dict[str, Any] | None) -> bool:

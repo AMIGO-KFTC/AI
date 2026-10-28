@@ -29,7 +29,7 @@ def test_full_flow_stage_1_to_4(kb):
 
     stages = [e["stage"] for e in seen if e["type"] == "stage"]
     assert stages[:2] == ["analyzing", "summary"]
-    assert {e["key"] for e in seen if e["type"] == "slot"} == {"overview", "regular", "partners", "irregular", "milestones", "stakeholders", "systems", "dept_notes"}
+    assert {e["key"] for e in seen if e["type"] == "slot"} == {"overview", "regular", "partners", "irregular", "milestones", "stakeholders", "systems"}
     assert kinds(result) == ["summary", "question"]
     snap = result.snapshot
     assert snap["waiting"] and snap["stage"] == "qna" and snap["question_count"] == 1
@@ -87,10 +87,10 @@ def test_full_flow_stage_1_to_4(kb):
     version = snap["document_version"]
     doc = snap["document"]
     assert doc.startswith("# 업무 인수인계서")
-    for heading in ("## 1. 업무 단위별 일정 명세표", "## 2. 주요 내용", "#### 1) 정기업무", "#### 2) 비정기 업무", "## 3. 기타 자료"):
+    for heading in ("## 1. 업무 단위별 일정 명세표", "## 2. 주요 내용", "#### 가. 정기업무", "#### 나. 비정기 업무", "## 3. 기타 자료"):
         assert heading in doc
     assert "## 5." not in doc and "확인 필요 사항" not in doc and "근거 자료" not in doc  # 양식에 없는 장은 싣지 않는다
-    assert "SLA 1시간" in doc and "##### 나. 보도자료 게시" in doc
+    assert "SLA 1시간" in doc and "##### ② 보도자료 게시" in doc
 
     # 검토 의견 → 문서 재작성(v2)
     result = agent.send_message("s1", "Google Analytics 권한은 기존 담당자가 직접 이관해 줍니다", kb)

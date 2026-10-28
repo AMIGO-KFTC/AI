@@ -56,25 +56,18 @@ def test_chat_and_plan_prompts():
     assert "웹 접근성 인증 현황표" in plan and "중복으로 봅니다" in plan and "가. " not in plan  # 중복 찾기에는 이름만
 
 
-def test_only_related_targets_become_items_and_are_not_asked():
-    """인수인계 목록 중 인계자의 업무 단위와 관련된 서류·물품만 항목이 된다. 부서별 추가 자료는 질의응답으로 묻지 않는다(노션 '추가 요구사항 정의' 14)."""
-    profile = {**WITH_INFO, "units": [{"name": "웹 접근성 관리", "regular": ["웹 접근성 인증 갱신"], "irregular": []}]}
+def test_staff_document_has_no_department_files():
+    """부서별 추가자료는 팀장 인수인계서(16장)에만 싣는다. 팀원 문서는 분석·질문하지 않고 싣지도 않는다."""
+    profile = {**WITH_INFO, "dept_items": ["웹 접근성 인증 현황표"]}
     agent = HandoverAgent()
     snap = agent.start("d1", profile, FakeKB([])).snapshot
-    titles = [it["title"] for it in snap["slots"]["dept_notes"]["items"]]
-    assert titles == ["웹 접근성 인증 현황표", "웹 접근성 인증서 사본 첨부"]  # 업무와 관련 없는 계약 명세표·도메인 현황표·계정 명부는 뺀다
     assert not [g for g in snap["gaps"] if g["slot"] == "dept_notes"]
+    assert "부서별 추가 자료" not in agent.finish("d1", FakeKB([])).snapshot["document"]
 
 
-def test_no_related_target_means_no_department_question():
-    profile = {**WITH_INFO, "units": [{"name": "예산 편성", "regular": ["월간 집행 보고"], "irregular": []}]}
-    snap = HandoverAgent().start("d3", profile, FakeKB([])).snapshot
-    assert not snap["slots"]["dept_notes"]["items"] and not [g for g in snap["gaps"] if g["slot"] == "dept_notes"]
-
-
-def test_targets_found_in_documents_become_items_with_citations():
-    docs = [{"file_name": "운영매뉴얼.pdf", "source_type": "pdf", "text": "웹 접근성 인증 현황표는 공유드라이브에 두고 매 분기 점검 후 박지훈 차장이 갱신한다."}]
-    snap = HandoverAgent().start("d2", WITH_INFO, FakeKB(docs)).snapshot
-    items = snap["slots"]["dept_notes"]["items"]
-    assert any(it["title"] == "웹 접근성 인증 현황표" and it["citations"] for it in items)
-    assert "웹 접근성 인증 현황표" not in {g.get("note_topic") for g in snap["gaps"]}
+def test_no_department_list_means_no_department_section():
+    snap = HandoverAgent().start("d3", {k: v for k, v in WITH_INFO.items() if k != "dept_notes"}, FakeKB([])).snapshot
+    from amigo_agent import render_document
+    from datetime import date
+    md = render_document(profile={"name": "김민수"}, slots=snap["slots"], gaps=[], sources=[], version=1, today=date(2026, 10, 28))
+    assert "### 부서별 추가 자료" not in md

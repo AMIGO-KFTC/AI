@@ -23,7 +23,7 @@ def asks(slot_key):
 
 def test_two_versions_have_their_own_chapters_in_template_order():
     # [인사발령] A 업무 단위 요약 → B 정기업무(+협업 표) → C 비정기 업무(+추진 경과·협업 표) → D 기타 자료(시스템 접근 권한 · 부서별 추가 자료)
-    assert keys(PROFILE) == ["overview", "regular", "partners", "irregular", "milestones", "stakeholders", "systems", "dept_notes"]
+    assert keys(PROFILE) == ["overview", "regular", "partners", "irregular", "milestones", "stakeholders", "systems"]  # 부서별 추가 자료는 분석하지 않는다(파일만 올림)
     # [장기휴가] A 세부 업무 → B 주요 연락망 → C 기타 자료(시스템 접근 권한)
     assert keys(LEAVE) == ["leave_tasks", "contacts", "systems"]
     assert mode_of({}) != MODE_LEAVE and mode_of({"mode": "LEAVE"}) == MODE_LEAVE
@@ -152,7 +152,7 @@ def test_full_version_document_follows_the_template_chapters():
     headings = [line for line in doc.splitlines() if line.startswith("## ")]
     # 협업관계·추진 경과는 별도 장이 아니라 각 카드 안에, 시스템 접근 권한·부서별 추가 자료는 '기타 자료' 아래 소제목으로 들어간다
     assert headings[:4] == ["## 1. 업무 단위별 일정 명세표", "## 2. 주요 내용", "## 3. 기타 자료"]
-    assert "### 시스템 접근 권한" in doc and "### 부서별 추가 자료" in doc
+    assert "### 시스템 접근 권한" in doc and "### 부서별 추가 자료" not in doc  # 팀 인수인계 목록이 있을 때만(파일만 올림)
     assert '<th colspan="12">계획기간</th>' in doc and "<th>1월</th>" in doc and '<th rowspan="2">비고</th>' in doc  # 월별 일정표, 머리글 2행
     assert "<th>업무 개요</th>" in doc and "<th>수행 시기</th>" in doc
 

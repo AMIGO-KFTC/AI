@@ -279,12 +279,14 @@ def _children_for(child: SlotSpec, child_items: list[dict], name: str) -> list[d
 GANADA = "가나다라마바사아자차카타파하"
 
 
+CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
+
+
 def _card_number(index: int, ganada: bool) -> str:
-    """카드 번호: 1) 2) … 또는 가. 나. …(14개를 넘으면 가1. 처럼 잇는다)."""
+    """카드 번호: 1) 2) … 또는 ① ② …(인사발령 '주요 내용'의 세부업무, 20개를 넘으면 (21) 처럼 쓴다)."""
     if not ganada:
         return f"{index})"
-    letter = GANADA[(index - 1) % len(GANADA)]
-    return f"{letter}{(index - 1) // len(GANADA) or ''}."
+    return CIRCLED[index - 1] if index <= len(CIRCLED) else f"({index})"
 
 
 def _render_cards(out: list[str], spec, items: list[dict], cites: _Citations, children: list[tuple[SlotSpec, list[dict]]], heading: str = "###", ganada: bool = False) -> None:
@@ -359,7 +361,7 @@ def _unit_groups(profile: dict[str, Any], slots: dict[str, SlotState]) -> list[t
 
 
 def _render_main_contents(out: list[str], profile: dict[str, Any], slots: dict[str, SlotState], active: tuple[SlotSpec, ...], cites: _Citations) -> None:
-    """인사발령 '2. 주요 내용': A. 단위업무 → 1) 정기업무 / 2) 비정기 업무 → 가. 세부업무(카드). (노션 '추가 요구사항 정의' 16)"""
+    """인사발령 '2. 주요 내용': A. 단위업무 → 가. 정기업무 / 나. 비정기 업무 → ① 세부업무(카드). (노션 '인수인계서 형식')"""
     groups = _unit_groups(profile, slots)
     lettered = [g for g in groups if g[0]]
     for gi, (unit, works) in enumerate(groups):
@@ -369,7 +371,7 @@ def _render_main_contents(out: list[str], profile: dict[str, Any], slots: dict[s
             spec = SLOT_BY_KEY[kind]
             if spec not in active:
                 continue
-            out += [f"#### {ki}) {label}", ""]
+            out += [f"#### {GANADA[ki - 1]}. {label}", ""]
             items = works[kind]
             if not items:
                 out += ["확인된 내용이 없습니다.", ""]
@@ -492,15 +494,21 @@ def _render_office_pending(out: list[str], slots: dict[str, SlotState], cites: _
         out.append("")
 
 
-def _render_office_dept(out: list[str], profile: dict[str, Any]) -> None:
-    """16. 부서·팀(반, 사무소)별 추가자료: 소속 부·팀 인수인계 목록이 있는 팀만 싣는다. 항목마다 자료를 올렸는지 표로 보인다(화면은 올리는 카드로 그린다)."""
-    info = clean_dept_info((profile or {}).get("dept_notes"))
-    names = info["items"]
+def dept_items(profile: dict[str, Any]) -> list[str]:
+    """소속 부·팀 인수인계 목록의 서류·물품(부서별 추가자료). BackEnd 가 dept_items 로 주고, 팀장 세션은 dept_notes 에도 들어 있다."""
+    items = [" ".join(str(x).split()) for x in (profile or {}).get("dept_items") or [] if str(x).strip()]
+    return items or clean_dept_info((profile or {}).get("dept_notes"))["items"]
+
+
+def _render_dept_uploads(out: list[str], profile: dict[str, Any], heading: str) -> None:
+    """부서별 추가자료: 소속 부·팀 인수인계 목록이 있는 팀만 싣는다. AI 가 채우지 않고 인계자가 항목마다 파일을 올린다.
+    문서에는 항목별 등록 여부 표로 싣고, 화면은 이 표를 올리는 카드로 그린다(FrontEnd DeptFilesTable)."""
+    names = dept_items(profile)
     if not names:
         return
     uploads = (profile or {}).get("dept_uploads") or {}
     out += [
-        f"## {OFFICE_DEPT_TITLE}",
+        heading,
         "",
         f"해당 부서의 인수인계에 필요한 추가자료 {len(names)}개 항목이 확인되었습니다. 아래 항목별로 자료를 등록해 주세요.",
         "",
@@ -520,7 +528,7 @@ def _render_office(out: list[str], profile: dict[str, Any], slots: dict[str, Slo
     _render_office_items(out, slots, cites, (3,))
     _render_office_pending(out, slots, cites)
     _render_office_items(out, slots, cites, tuple(range(5, 16)))
-    _render_office_dept(out, profile)
+    _render_dept_uploads(out, profile, f"## {OFFICE_DEPT_TITLE}")
 
 
 def render_document(
