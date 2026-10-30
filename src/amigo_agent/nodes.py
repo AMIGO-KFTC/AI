@@ -386,6 +386,12 @@ def _missing_field_gaps(slots: dict[str, Any], active: list[Any], gaps: list[Gap
         for item in (slots.get(spec.key) or {}).get("items", []):
             asked_fields = {g.get("field") for g in gaps if g.get("item_id") == item.get("id") and g.get("field")}
             name = item_label(spec, item)
+            sched = str((item.get("fields") or {}).get("schedule") or "").strip()
+            if spec.key == "leave_tasks" and sched and "schedule" not in asked_fields:
+                # 장기휴가 '주요 일정 및 처리사항'은 필수 항목이라, 자료에서 채웠어도 인계자에게 한 번은 확인하고 빠진 것을 더 받는다(값은 그대로 두고 더 받은 내용만 보탠다)
+                question = (f"'{name}'의 주요 일정 및 처리사항은 자료에서 다음과 같이 확인했어요.\n{sched}\n"
+                            "부재 기간 중 반드시 처리해야 하는 업무나 마감일 중 빠진 것이 있나요? 없으면 '없어요'라고 답해 주세요.")
+                made.append(_gap(spec, item["id"], f"'{name}'의 주요 일정 및 처리사항 확인", question, field="schedule", aux=False, element="(필수) 부재 기간 중 반드시 처리해야 하는 업무"))
             for key in missing_fields(spec, item, aux=True):
                 if key in asked_fields or key == spec.title_field:
                     continue
