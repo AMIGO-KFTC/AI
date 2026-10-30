@@ -578,6 +578,11 @@ def seed_items(spec: SlotSpec, profile: dict[str, Any] | None) -> list[dict[str,
     return []
 
 
+def units_without_details(profile: dict[str, Any] | None) -> list[str]:
+    """이름만 고르고 정기·비정기 세부업무를 하나도 입력하지 않은 단위업무 이름. 이 단위업무는 자료에서 항목을 찾아 질문한다."""
+    return [u["name"] for u in profile_units(profile) if u["name"] and not u["regular"] and not u["irregular"]]
+
+
 def has_seeds(profile: dict[str, Any] | None) -> bool:
     """인계자가 단위업무·세부업무(팀장은 사업계획·현안)를 입력했는지(입력했으면 장의 항목은 입력한 것만 쓴다)."""
     return bool(profile_units(profile) or profile_plans(profile) or profile_issues(profile))

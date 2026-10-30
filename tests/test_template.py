@@ -312,3 +312,18 @@ def test_manager_form_does_not_ask_the_plan_period():
     snap = agent.start("noperiod", {**PROFILE, "form": "office", "plans": ["사업 A"]}, FakeKB()).snapshot
     assert not [g for g in snap["gaps"] if g["slot"] == "office_plans" and g.get("field") == "period"]
     assert any(g["slot"] == "office_plans" and g.get("field") == "note" for g in snap["gaps"])
+
+
+def test_units_without_details_keep_the_items_found_in_the_materials():
+    """한 단위업무만 세부업무를 입력해도, 세부업무를 하나도 안 쓴 단위업무는 자료에서 찾은 항목을 남겨 질문한다."""
+    from amigo_agent.nodes import settle_items
+
+    profile = {"units": [{"name": "소송 관리", "regular": ["소송 사건 대장 관리"], "irregular": []}, {"name": "계약서 검토", "regular": [], "irregular": []}]}
+    found = [
+        {"id": "r1", "title": "소송 사건 대장 관리", "fields": {"name": "소송 사건 대장 관리", "unit": "소송 관리"}},
+        {"id": "r2", "title": "계약서 검토 의뢰 처리", "fields": {"name": "계약서 검토 의뢰 처리", "unit": "계약서 검토"}},
+        {"id": "r3", "title": "소송 보조 업무", "fields": {"name": "소송 보조 업무", "unit": "소송 관리"}},  # 세부업무를 쓴 단위업무가 안 적은 항목 → 뺀다
+    ]
+    slot = {"items": [dict(it) for it in found]}
+    settle_items(SLOT_BY_KEY["regular"], profile, slot)
+    assert [it["fields"]["name"] for it in slot["items"]] == ["소송 사건 대장 관리", "계약서 검토 의뢰 처리"]

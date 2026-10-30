@@ -68,6 +68,7 @@ from .template import (
     is_office,
     profile_units,
     seed_items,
+    units_without_details,
     slots_for,
 )
 from .textkit import CREDENTIAL_MASK, scrub_credentials
@@ -248,6 +249,13 @@ def settle_items(spec: Any, profile: dict[str, Any], slot: dict[str, Any]) -> No
                 (match.get("candidates") or {}).pop(key, None)
             match["title"] = seed["name"]
             settled.append(match)
+        if spec.seed in ("regular", "irregular"):
+            # 세부업무를 하나도 안 쓴 단위업무는 입력한 것으로 거를 수 없으니, 자료에서 찾은 그 단위업무의 항목을 그대로 두고 질문한다
+            open_units = units_without_details(profile)
+            for it in items:
+                unit = str((it.get("fields") or {}).get("unit") or "")
+                if it not in settled and unit and any(normalize_title(unit) == normalize_title(name) or same_name(unit, name) for name in open_units):
+                    settled.append(it)
         dropped = [item_label(spec, it) for it in items if it not in settled]
         if dropped:
             logger.info("drop %s items not entered by the giver: %s", spec.key, dropped)
