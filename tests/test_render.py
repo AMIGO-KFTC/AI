@@ -305,3 +305,13 @@ def test_render_drops_jira_issue_keys_from_the_document_but_keeps_the_text():
     assert "LGL-3" not in md and "LGL-7" not in md
     assert "준비서면 반박 논리 정리는 진행 중(기한 2026-11-12)이며 외부 자문 의견을 반영함." in md
     assert "미수금 내용증명 발송 후속 조치는 완료됨." in md
+
+
+def test_numbered_decisions_glued_to_the_previous_sentence_are_split_into_lines():
+    """모델이 줄바꿈 없이 '… 제공). 2. 소송 …' 처럼 이어 쓴 다음 번호도 새 줄로 나누고, '1.' 도 지우지 않는다."""
+    from amigo_agent.render import _lines_br
+
+    glued = "1. 외부 자문\n판단 근거: 반영함(2026-11-20 변론기일). 2. 소송 대응 방향 결정\n판단 근거: 사건별로 수립함."
+    assert _lines_br(glued) == "1. 외부 자문<br>판단 근거: 반영함(2026-11-20 변론기일).<br>2. 소송 대응 방향 결정<br>판단 근거: 사건별로 수립함."
+    assert _lines_br("1. 단일 결정\n판단 근거: 하나뿐") == "단일 결정<br>판단 근거: 하나뿐"  # 결정이 하나면 번호를 뗀다
+    assert _lines_br("기준일은 2026. 11. 20 입니다. 2. 항은 별도") == "기준일은 2026. 11. 20 입니다. 2. 항은 별도"  # 번호 목록이 아니면 건드리지 않는다
