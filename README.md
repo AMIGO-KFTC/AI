@@ -149,7 +149,7 @@ cd ..\FrontEnd; npm install
 |---|---|
 | API 키 없이 시연 (기본) | 그대로 두기 → 규칙 기반 오프라인 엔진 |
 | Claude 로 실제 분석 | `ANTHROPIC_API_KEY=sk-ant-...` |
-| 모델 바꾸기 | `AMIGO_LLM_MODEL=claude-sonnet-5-5`(기본) / `claude-haiku-4-5`(가장 저렴, 약 절반) / `claude-opus-5-5`(약 2배, 품질 가장 좋음) |
+| 모델 바꾸기 | `AMIGO_LLM_MODEL=claude-opus-5-5`(기본, 품질 가장 좋음) / `claude-sonnet-5-5`(약 절반) / `claude-haiku-4-5`(가장 저렴하지만 이름·숫자를 자주 틀림) |
 | 키가 있어도 오프라인 엔진으로 | `AMIGO_LLM_MODE=offline` |
 | Claude API 비용 상한 두기 | `AMIGO_LLM_BUDGET_USD=10` (모든 작업 합계가 $10 를 넘으면 새 AI 작업을 막음, 0 이면 제한 없음) |
 | 컨플루언스 링크 수집 | `CONFLUENCE_BASE_URL` + `CONFLUENCE_PAT`(Server/DC), Cloud 는 `CONFLUENCE_EMAIL` + `CONFLUENCE_API_TOKEN` |
@@ -535,14 +535,14 @@ agent.snapshot(session_id)  # {"stage","waiting","slots","gaps","pending","docum
 
 ## LLM 설정 (Claude)
 
-- 공식 Anthropic Python SDK 로 호출합니다. 기본 모델은 `claude-sonnet-5-5` 이고, `AMIGO_LLM_MODEL` 로 비용이 가장 낮은 `claude-haiku-4-5` 나 `claude-opus-5-5` 로 바꿀 수 있습니다.
+- 공식 Anthropic Python SDK 로 호출합니다. 기본 모델은 `claude-opus-5-5` 이고(이미지 읽기까지 모든 호출), `AMIGO_LLM_MODEL` 로 `claude-sonnet-5-5` 나 가장 저렴한 `claude-haiku-4-5` 로 바꿀 수 있습니다.
   Haiku 4.5 는 effort·서버 측 fallbacks 를 지원하지 않으므로 그 모델에는 보내지 않습니다(`llm.py` 의 `MODEL_FEATURES`).
 - **구조화 출력**(`output_config.format` JSON 스키마)으로 결과를 받아 Pydantic 으로 검증합니다.
 - **도구 호출**: `search_documents`(strict 스키마)를 모델이 필요할 때 호출하고, 결과를 `[E번호]` 근거로 돌려줍니다.
   항목은 근거 번호가 있어야만 기록되며(환각 방지), 번호는 최종 문서의 근거 자료 목록으로 이어집니다.
 - effort 를 지원하는 모델(Opus 5.5·Sonnet 5.5)은 `effort` 로 깊이를 조절합니다: 분석 `medium`, 대화 `low`(Haiku 4.5 는 해당 없음). 최종 문서는 모델 없이 코드가 표와 근거 번호까지 직접 만듭니다.
-- **안전 분류기 거절 대비**: 서버 측 fallbacks(`server-side-fallback-2026-07-01`, `fallbacks="default"`)를 기본으로 켭니다.
-  끄려면 `AMIGO_LLM_FALLBACKS=false`. 거절이 끝까지 이어지면 사용자에게 안내 메시지를 보여 줍니다.
+- **안전 분류기 거절 대비**: 서버 측 fallbacks(`server-side-fallback-2026-07-01`, `fallbacks="default"`)는 거절될 때 **다른 모델로 바꿔 재시도**하므로, 모든 호출을 Opus 로만 보내려고 기본은 꺼 둡니다.
+  켜려면 `AMIGO_LLM_FALLBACKS=true`. 거절이 끝까지 이어지면 사용자에게 안내 메시지를 보여 줍니다.
 - 시스템 프롬프트는 고정해 프롬프트 캐시를 활용합니다.
 
 **API 키가 없으면** 규칙 기반 오프라인 엔진(`engine/offline.py`)으로 자동 전환되어 전체 흐름을 그대로 시연할 수 있습니다.
@@ -552,9 +552,10 @@ agent.snapshot(session_id)  # {"stage","waiting","slots","gaps","pending","docum
 |---|---|---|
 | `ANTHROPIC_API_KEY` | | Claude API 키(또는 `ant auth login` 프로필) |
 | `AMIGO_LLM_MODE` | `auto` | `auto` / `claude` / `offline` |
-| `AMIGO_LLM_MODEL` | `claude-sonnet-5-5` | 사용할 모델(`claude-haiku-4-5`, `claude-opus-5-5`) |
+| `AMIGO_LLM_MODEL` | `claude-opus-5-5` | 사용할 모델(`claude-sonnet-5-5`, `claude-haiku-4-5`) |
+| `AMIGO_VISION_MODEL` | `claude-opus-5-5` | 스크린샷·대화 캡처(PNG·JPG) 속 글자를 읽는 모델. 대화용 `AMIGO_LLM_MODEL` 과 따로 정한다(약한 모델은 사람 이름·숫자를 틀린다). 비용을 줄이려면 `claude-sonnet-5-5` |
 | `AMIGO_EFFORT_ANALYSIS` / `_CHAT` | `medium` / `low` | 단계별 effort |
-| `AMIGO_LLM_FALLBACKS` | `true` | 서버 측 거절 fallback |
+| `AMIGO_LLM_FALLBACKS` | `false` | 서버 측 거절 fallback(켜면 거절될 때 다른 모델로 바꿔 재시도) |
 | `AMIGO_LLM_TIMEOUT` | `300` | API 요청 제한 시간(초) |
 | `AMIGO_MAX_GAPS_PER_SLOT` | `2` | 규칙 엔진(오프라인)의 슬롯당 질문 후보 수. Claude 모드와 전체 질문 수에는 제한이 없다(암묵지를 확인할 질문은 모두 묻는다) |
 | `AMIGO_MAX_CONCURRENCY` | `3` | 슬롯 병렬 분석 수(최소 2) |

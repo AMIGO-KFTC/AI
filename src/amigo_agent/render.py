@@ -66,8 +66,26 @@ class _Citations:
 EVIDENCE_ID_RE = re.compile(r"\s*[\(\[]E\d+(?:\s*[,·/]\s*E\d+)*[\)\]]")
 
 
+# 지라에서 가져온 자료의 이슈 키('[LGL-3]', '(AMG-12)')가 문장에 딸려 오면 문서에서는 뺀다(출처는 [번호] 로 따로 단다).
+# 국제 표준·규격 번호('[ISO-27001]', '[KS-1234]')는 내용이므로 남긴다.
+JIRA_KEY_RE = re.compile(r"[\[(](?!(?:ISO|IEC|KS|RFC|NIST|ITU|PCI|SP|GS|TTA)-)[A-Z][A-Z0-9]{1,9}-\d{1,6}[\])][ \t]?")
+
+
+def strip_jira_keys(text: str) -> str:
+    if not JIRA_KEY_RE.search(text):
+        return text
+    def drop(match: re.Match) -> str:
+        # 앞 글자에 붙어 있던 키('개발(AMG-12) 완료')는 뒤 공백을 남겨 단어가 붙지 않게 한다
+        before = match.string[match.start() - 1] if match.start() else ""
+        return match.group(0)[-1] if match.group(0)[-1] in " \t" and before and not before.isspace() else ""
+
+    text = JIRA_KEY_RE.sub(drop, text)
+    text = re.sub(r"[ \t]+(?=[.,;:)]|$)", "", text, flags=re.M)  # 키가 문장 끝에 있었다면 남는 앞 공백을 뗀다
+    return re.sub(r"(?<=\S)[ \t]{2,}", " ", text)
+
+
 def _clean(value: Any) -> str:
-    return EVIDENCE_ID_RE.sub("", str(value or "")).strip()
+    return strip_jira_keys(EVIDENCE_ID_RE.sub("", str(value or ""))).strip()
 
 
 def _tilde(text: str) -> str:
