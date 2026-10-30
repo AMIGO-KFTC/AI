@@ -104,10 +104,31 @@ LINE_SEP_RE = re.compile(r"\s*\n+\s*|\s+/\s+")  # 칸 안에서 문장을 나누
 NUMBERED_RE = re.compile(r"^(\d{1,2})[.)]\s+")
 
 
+def _split_inline_numbers(parts: list[str]) -> list[str]:
+    """줄바꿈 없이 앞 문장 뒤에 이어 붙은 다음 번호('…제공). 2. 소송 대응')를 새 줄로 나눈다.
+    번호가 1부터 차례로 이어질 때만 나누므로 날짜('2026. 11. 20')나 조항 번호 같은 숫자는 건드리지 않는다."""
+    out: list[str] = []
+    last = 0  # 마지막으로 본 목록 번호
+    for part in parts:
+        match = NUMBERED_RE.match(part)
+        if match:
+            last = int(match.group(1))
+        while last:
+            inline = re.search(rf"(?<=\S)\s+(?={last + 1}[.)]\s+\S)", part)
+            if not inline:
+                break
+            out.append(part[: inline.start()])
+            part = part[inline.end():]
+            last += 1
+        out.append(part)
+    return out
+
+
 def _lines_br(text: str) -> str:
     """칸 안의 여러 문장을 줄바꿈(<br>)으로 나눈다(노션 '추가 요구사항 정의': 새 문장은 '/' 대신 줄바꿈).
+    모델이 줄바꿈 없이 이어 쓴 다음 번호('… 2. …')도 새 줄로 나눈 뒤 센다.
     번호 목록의 항목이 하나뿐이면('1. …'만 있으면) 번호를 뗀다(같은 문서 17)."""
-    parts = [part for part in LINE_SEP_RE.split(text.replace("\r", "")) if part.strip()]
+    parts = _split_inline_numbers([part for part in LINE_SEP_RE.split(text.replace("\r", "")) if part.strip()])
     numbered = [i for i, part in enumerate(parts) if NUMBERED_RE.match(part)]
     if len(numbered) == 1 and NUMBERED_RE.match(parts[numbered[0]]).group(1) == "1":
         parts[numbered[0]] = NUMBERED_RE.sub("", parts[numbered[0]], count=1)
