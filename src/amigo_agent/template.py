@@ -79,6 +79,7 @@ class SlotSpec:
     group: str = ""  # 여러 장을 한 장 제목 아래 소제목으로 묶는다(기타 자료)
     split_field: str = ""  # 표를 이 필드 값(외부/내부)으로 나눠 싣는다
     split_drop: tuple[tuple[str, tuple[str, ...]], ...] = ()  # 나눈 표마다 뺄 열(내부 표에는 연락처 열이 없다)
+    always_table: bool = False  # 항목이 없어도(나눠 싣는 표는 한쪽만 비어도) 빈 행('-')이 있는 표를 싣는다(주요 연락망: 화면에서 '직접 수정'으로 행을 더할 수 있게)
     muted_note: str = ""  # 화면에서만 이 장 위에 회색으로 보이는 작성 안내(내려받기·전송·챗봇 자료에서는 빠진다)
     # 받는 장의 항목마다 한 번 묻는 예/아니요 질문(협업 유의사항). 예면 follow_question 으로 묻는다. {name} = 받는 장의 항목 이름
     gate_question: str = ""
@@ -364,6 +365,7 @@ SLOTS: tuple[SlotSpec, ...] = (
         empty_ask=ASK_AUX,
         split_field="scope",
         split_drop=(("내부", ("phone",)),),
+        always_table=True,
     ),
     # ------------------------------------------------------------------ 두 버전 공통: 기타 자료 — 시스템 접근 권한([인사발령] D / [장기휴가] C)
     SlotSpec(

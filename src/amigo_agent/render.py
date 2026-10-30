@@ -117,7 +117,7 @@ def _md_table(out: list[str], headers: list[str], rows: list[list[str]]) -> None
 
 
 def _scoped(spec: SlotSpec, items: list[dict]) -> list[tuple[str, list[FieldSpec], list[dict]]]:
-    """표를 나눠 싣는 장(협업 대상)이면 [(외부, 열, 행), (내부, 열, 행)], 아니면 [("", 열, 행)]. 행이 없는 쪽은 뺀다."""
+    """표를 나눠 싣는 장(협업 대상)이면 [(외부, 열, 행), (내부, 열, 행)], 아니면 [("", 열, 행)]. 행이 없는 쪽은 뺀다(항상 표를 싣는 장은 빈 행으로 둔다)."""
     columns = list(spec.shown)
     if not spec.split_field:
         return [("", columns, items)]
@@ -125,13 +125,13 @@ def _scoped(spec: SlotSpec, items: list[dict]) -> list[tuple[str, list[FieldSpec
     out = []
     for scope in PARTNER_SCOPES:
         rows = [it for it in items if scope_of(it.get("fields") or {}) == scope]
-        if rows:
+        if rows or spec.always_table:
             out.append((scope, [f for f in columns if f.key not in drop.get(scope, ())], rows))
     return out
 
 
 def _render_table(out: list[str], spec, items: list[dict], cites: _Citations) -> None:
-    if not items:  # 있을 때만 적는 장(시스템 접근 권한): 직접 적을 수 있게 빈 행을 둔다
+    if not items and not spec.split_field:  # 있을 때만 적는 장(시스템 접근 권한): 직접 적을 수 있게 빈 행을 둔다
         _md_table(out, [f.label for f in spec.shown] + list(spec.handwritten), [["-"] * (len(spec.shown) + len(spec.handwritten))])
         return
     for scope, columns, rows in _scoped(spec, items):
@@ -143,6 +143,8 @@ def _render_table(out: list[str], spec, items: list[dict], cites: _Citations) ->
             fields.setdefault(spec.title_field, item_label(spec, item))
             marks = cites.marks(spec, item, fields)
             cells.append([_cell(fields.get(f.key)) + marks.get(f.key, "") for f in columns] + [HANDWRITTEN_BLANK] * len(spec.handwritten))
+        if not cells:  # 항목이 없는 쪽(외부·내부)도 표는 두고 빈 행('-')을 둔다: 직접 수정에서 행을 더하거나 칸을 채울 수 있다
+            cells = [["-"] * (len(columns) + len(spec.handwritten))]
         _md_table(out, [f.label for f in columns] + list(spec.handwritten), cells)
 
 
@@ -423,7 +425,7 @@ def _render_slot(out: list[str], spec: SlotSpec, slots: dict[str, SlotState], ac
     children = [(c, (slots.get(c.key) or {}).get("items") or []) for c in active if c.embed_into == spec.key]
     if spec.muted_note:
         out += [f'<span class="doc-guide">{html.escape(spec.muted_note)}</span>', ""]
-    if spec.layout == "table" and (items or spec.handwritten):  # 시스템 접근 권한은 비어 있어도 직접 적을 수 있게 빈 표를 둔다
+    if spec.layout == "table" and (items or spec.handwritten or spec.always_table):  # 시스템 접근 권한·주요 연락망은 비어 있어도 직접 적을 수 있게 빈 표를 둔다
         _render_table(out, spec, items, cites)
         return
     if not items:
