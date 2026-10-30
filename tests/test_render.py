@@ -164,6 +164,21 @@ def test_leave_version_follows_template_a_b_c():
     assert contacts.index("**외부**") < contacts.index("**내부**") and "내선 2345" not in contacts  # 내부 표에는 연락처 열이 없다
 
 
+def test_leave_contacts_are_always_tables_even_when_empty_or_one_sided():
+    """주요 연락망은 항목이 없거나 한쪽(외부/내부)뿐이어도 두 표(빈 행 '-')를 싣는다: 직접 수정에서도 표로 보이고 행을 더할 수 있다."""
+    profile = {"name": "김민수", "mode": "leave"}
+    empty = render(empty_slots(["leave_tasks", "systems", "contacts"]), profile=profile).split("## 2. 주요 연락망")[1].split("## 3.")[0]
+    assert "확인된 내용이 없습니다" not in empty
+    external = ["**외부**", "", "| 소속 | 이름 | 주요역할 | 연락처 | 비고(유의사항) |", "|---|---|---|---|---|", "| - | - | - | - | - |", ""]
+    internal = ["**내부**", "", "| 소속 | 이름 | 주요역할 | 비고(유의사항) |", "|---|---|---|---|", "| - | - | - | - |"]
+    assert "\n".join(external + internal) in empty
+    slots = empty_slots(["leave_tasks", "systems", "contacts"])
+    slots["contacts"]["items"] = [{"id": "c1", "title": "박지훈", "fields": {"name": "박지훈", "org": "재무팀", "role": "대금", "scope": "내부"}, "citations": []}]
+    one_sided = render(slots, profile=profile).split("## 2. 주요 연락망")[1].split("## 3.")[0]
+    assert "| - | - | - | - | - |" in one_sided.split("**내부**")[0]  # 외부는 빈 행 표
+    assert "| 재무팀 | 박지훈 | 대금 | - |" in one_sided.split("**내부**")[1]
+
+
 def test_system_access_is_left_blank_for_handwriting_when_missing():
     md = render(empty_slots())
     part = md.split("## 3. 기타 자료")[1]
