@@ -102,3 +102,43 @@ def test_gantt_edit_keeps_working_after_render_strips_the_tags():
     shown = next(re.match(r"<tr><td>(.*?)</td>", r).group(1) for r in doc.splitlines() if r.startswith("<tr><td>") and "bar" in r)
     assert shown == "소송 진행" and "LGL-3" not in doc
     assert apply_gantt_edit(slots, shown, 0, [4]) == "overview"
+
+
+def _render_with_gantt(period, name="소송 진행", handover_date="2026-11-14"):
+    slots = empty_slots(["overview"])
+    upsert_item(slots["overview"], item_id="", title=name, fields={"name": name, "period": period, "note": "비고 글"}, citations=[], origin="document")
+    return render_document(profile={"name": "김민수", "handover_date": handover_date}, slots=slots, gaps=[], sources=[], version=1)
+
+
+def test_edit_gantt_markdown_works_without_agent_state_for_a_monthly_table():
+    """AI 작업 상태가 없는 문서(데모·가져온 문서)도 문서의 일정표 행을 직접 고쳐 막대를 바꾼다. 이름·비고 같은 글은 그대로."""
+    from amigo_agent.edits import edit_gantt_markdown
+
+    doc = _render_with_gantt("3월~5월")
+    assert _bar_rows(doc)["소송 진행"] == {3, 4, 5}
+    fixed = edit_gantt_markdown(doc, "소송 진행", 0, [1, 2, 11])
+    assert _bar_rows(fixed)["소송 진행"] == {1, 2, 11}
+    assert "<td>비고 글</td>" in fixed
+    assert fixed.split("<tr><td>소송 진행")[0] == doc.split("<tr><td>소송 진행")[0]  # 막대 행 앞의 다른 부분은 그대로
+    assert edit_gantt_markdown(doc, "없는 업무", 0, [1]) is None
+    assert edit_gantt_markdown(doc, "소송 진행", 1, [1]) is None  # 같은 이름이 하나뿐이면 두 번째는 없다
+
+
+def test_edit_gantt_markdown_works_for_a_quarter_table_with_yyyymm():
+    from amigo_agent.edits import edit_gantt_markdown
+
+    doc = _render_with_gantt("2026.03~2027.06")  # 2개 연도에 걸쳐 분기 8칸 표
+    assert "<th>1분기</th>" in doc and "2027년" in doc
+    fixed = edit_gantt_markdown(doc, "소송 진행", 0, [202607, 202608, 202609, 202701])  # 2026 3분기 + 2027 1분기
+    row = next(r for r in fixed.splitlines() if r.startswith("<tr><td>소송 진행"))
+    cells = row.split("</td>", 1)[1].rsplit("<td>", 1)[0]
+    assert cells == "<td></td><td></td>" + '<td class="bar" bgcolor="#7055C8">&nbsp;</td>' + "<td></td>" + '<td class="bar" bgcolor="#7055C8">&nbsp;</td>' + "<td></td>" * 3
+
+
+def test_edit_gantt_markdown_matches_the_name_shown_in_the_document_and_ignores_other_tables():
+    from amigo_agent.edits import edit_gantt_markdown
+
+    doc = _render_with_gantt("3월", name="[LGL-3] 소송 진행")  # 문서에는 '소송 진행'으로 보인다
+    assert edit_gantt_markdown(doc, "소송 진행", 0, [6]) is not None
+    plain = "## 1. 개요\n\n<table>\n<tr><th>항목</th><th>내용</th></tr>\n<tr><td>소송 진행</td><td>1월</td></tr>\n</table>\n"
+    assert edit_gantt_markdown(plain, "소송 진행", 0, [1]) is None  # 일정표가 아닌 표의 행은 건드리지 않는다
