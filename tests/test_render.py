@@ -272,3 +272,36 @@ def test_team_lead_leave_uses_the_staff_form():
     assert [s.key for s in slots_for({"form": "office", "mode": "leave"})] == ["leave_tasks", "contacts", "systems"]
     md = render_document(profile={"form": "office", "mode": "leave"}, slots={}, gaps=[], sources=[], version=1, today=date(2026, 10, 28))
     assert "## 1. 세부 업무" in md and "원내 양식" not in md
+
+
+def test_strip_jira_keys_keeps_the_sentence_and_standard_numbers():
+    from amigo_agent.render import strip_jira_keys
+
+    assert strip_jira_keys("[LGL-3] 준비서면 반박 논리 정리는 진행 중임.") == "준비서면 반박 논리 정리는 진행 중임."
+    assert strip_jira_keys("자료 송부(기한 11/12), [LGL-3] 준비서면 반박 논리 진행 중") == "자료 송부(기한 11/12), 준비서면 반박 논리 진행 중"
+    assert strip_jira_keys("미수금 내용증명 발송 후속 조치 완료됨 [LGL-7].") == "미수금 내용증명 발송 후속 조치 완료됨."
+    assert strip_jira_keys("연동 개발(AMG-12) 완료") == "연동 개발 완료"
+    assert strip_jira_keys("첫 줄 [LGL-3]\n[LGL-7] 둘째 줄") == "첫 줄\n둘째 줄"  # 줄은 합쳐지지 않는다
+    assert strip_jira_keys("정보보호 관리체계 [ISO-27001] 인증 유지") == "정보보호 관리체계 [ISO-27001] 인증 유지"  # 표준 번호는 내용
+    assert strip_jira_keys("[1] 번호 표시와 [E3 근거]는 그대로") == "[1] 번호 표시와 [E3 근거]는 그대로"
+
+
+def test_render_drops_jira_issue_keys_from_the_document_but_keeps_the_text():
+    slots = empty_slots()
+    slots["regular"]["items"] = [
+        {
+            "id": "r1",
+            "title": "소송 진행",
+            "fields": {
+                "name": "소송 진행",
+                "unit": "법무",
+                "overview": "[LGL-3] 준비서면 반박 논리 정리는 진행 중(기한 2026-11-12)이며 외부 자문 의견을 반영함.",
+                "decisions": "[LGL-7] 미수금 내용증명 발송 후속 조치는 완료됨.",
+            },
+            "citations": [CITE],
+        }
+    ]
+    md = render(slots)
+    assert "LGL-3" not in md and "LGL-7" not in md
+    assert "준비서면 반박 논리 정리는 진행 중(기한 2026-11-12)이며 외부 자문 의견을 반영함." in md
+    assert "미수금 내용증명 발송 후속 조치는 완료됨." in md

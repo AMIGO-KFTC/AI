@@ -115,7 +115,7 @@ class FakeClient:
 
 def test_claude_engine_end_to_end(kb):
     client = FakeClient()
-    agent = HandoverAgent(AgentConfig(llm_mode="claude", model="claude-opus-5-5", max_concurrency=1), client=client)
+    agent = HandoverAgent(AgentConfig(llm_mode="claude", model="claude-opus-5-5", max_concurrency=1, use_fallbacks=True), client=client)  # fallbacks 요청 모양을 확인하려고 켠다
     assert agent.describe() == {"engine": "claude", "model": "claude-opus-5-5"}
 
     seen = []
@@ -223,15 +223,23 @@ def test_haiku_requests_skip_unsupported_parameters(kb):
     assert "fallbacks" not in call and "betas" not in call
 
 
-def test_default_model_is_sonnet_and_sends_effort(kb, monkeypatch):
-    monkeypatch.delenv("AMIGO_LLM_MODEL", raising=False)
+def test_default_model_is_opus_with_no_fallback_to_another_model(kb, monkeypatch):
+    """설정을 따로 안 해도 모든 호출은 Opus 로만 나간다: 이미지 읽기도 Opus, 거절 시 다른 모델로 바꿔 재시도(fallbacks)도 기본은 끈다."""
+    for name in ("AMIGO_LLM_MODEL", "AMIGO_VISION_MODEL", "AMIGO_LLM_FALLBACKS"):
+        monkeypatch.delenv(name, raising=False)
     client = FakeClient()
     config = AgentConfig(llm_mode="claude", max_concurrency=1)
-    assert config.model == "claude-sonnet-5-5"
+    assert config.model == "claude-opus-5-5" and config.vision_model == "claude-opus-5-5" and config.use_fallbacks is False
     HandoverAgent(config, client=client).start("s1", PROFILE, kb)
-    call = client.messages.calls[0]
-    assert call["model"] == "claude-sonnet-5-5"
-    assert call["output_config"].get("effort") == "medium"
+    for call in client.messages.calls:
+        assert call["model"] == "claude-opus-5-5"
+        assert "fallbacks" not in call and "betas" not in call
+    assert client.messages.calls[0]["output_config"].get("effort") == "medium"
+
+
+def test_fallbacks_can_be_turned_on_by_env(monkeypatch):
+    monkeypatch.setenv("AMIGO_LLM_FALLBACKS", "true")
+    assert AgentConfig().use_fallbacks is True
 
 
 def test_analysis_prompt_asks_for_reference_documents():
