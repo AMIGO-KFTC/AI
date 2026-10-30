@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from .periods import span_to_period
 from .precedence import user_meta
+from .render import display_name
 from .state import SlotState, apply_field, item_label
 from .template import SLOT_BY_KEY
 
@@ -23,7 +24,8 @@ def apply_gantt_edit(slots: dict[str, SlotState], name: str, nth: int, months: l
             continue
         for item in slot.get("items", []):
             shown = str((item.get("fields") or {}).get(spec.title_field) or item_label(spec, item))  # 문서(render.py)의 첫 열과 같은 이름
-            if shown.strip() != name.strip():
+            # 문서에는 근거 번호('(E3)')·지라 키('[LGL-3]')를 뗀 이름이 보이므로, 저장된 이름도 같은 방식으로 다듬어 견준다(안 그러면 행을 못 찾는다)
+            if display_name(shown) != display_name(name):
                 continue
             if seen < nth:
                 seen += 1
