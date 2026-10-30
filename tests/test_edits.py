@@ -79,3 +79,26 @@ def test_edit_matches_the_name_shown_in_the_document():
     assert item["title"] != item["fields"]["name"]
     assert apply_gantt_edit(slots, "문서에 보이는 긴 업무 이름", 0, [4, 5]) == "overview"
     assert item["fields"]["period"] == "4월~5월"
+
+
+@pytest.mark.parametrize("stored", ["[LGL-3] 준비서면 반박 논리 정리", "(AMG-12) 준비서면 반박 논리 정리", "준비서면 반박 논리 정리 (E3)", "준비서면 반박 논리 정리"])
+def test_gantt_row_is_found_by_the_name_shown_in_the_document(stored):
+    """문서에는 지라 키·근거 번호를 뗀 이름이 보인다. 화면은 그 이름으로 막대를 고치므로, 저장된 이름에 그런 꼬리표가 있어도 행을 찾아야 한다(못 찾으면 서버가 409)."""
+    slots = empty_slots(["overview"])
+    upsert_item(slots["overview"], item_id="", title=stored, fields={"name": stored, "period": "3월~5월"}, citations=[], origin="document")
+    shown = "준비서면 반박 논리 정리"
+    assert apply_gantt_edit(slots, shown, 0, [6, 7]) == "overview"
+    assert plan_months(slots["overview"]["items"][0]["fields"]["period"]) == [6, 7]
+    assert apply_gantt_edit(slots, "다른 업무", 0, [1]) is None  # 이름이 다르면 여전히 못 찾는다
+
+
+def test_gantt_edit_keeps_working_after_render_strips_the_tags():
+    """실제 흐름: 문서를 그린 뒤 그 문서의 첫 칸 이름으로 막대를 고친다."""
+    import re
+
+    slots = empty_slots(["overview"])
+    upsert_item(slots["overview"], item_id="", title="[LGL-3] 소송 진행", fields={"name": "[LGL-3] 소송 진행", "period": "3월~5월"}, citations=[], origin="document")
+    doc = render_document(profile={"name": "김민수", "handover_date": "2026-11-14"}, slots=slots, gaps=[], sources=[], version=1)
+    shown = next(re.match(r"<tr><td>(.*?)</td>", r).group(1) for r in doc.splitlines() if r.startswith("<tr><td>") and "bar" in r)
+    assert shown == "소송 진행" and "LGL-3" not in doc
+    assert apply_gantt_edit(slots, shown, 0, [4]) == "overview"

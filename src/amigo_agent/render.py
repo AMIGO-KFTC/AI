@@ -88,6 +88,11 @@ def _clean(value: Any) -> str:
     return strip_jira_keys(EVIDENCE_ID_RE.sub("", str(value or ""))).strip()
 
 
+def display_name(value: Any) -> str:
+    """문서의 일정표 첫 칸에 보이는 이름(근거 번호·지라 키를 뗀 글). 화면이 막대를 고치며 보내는 이름과 저장된 이름을 이 값으로 견준다."""
+    return _clean(value).replace("\r", "").replace("\n", " / ").strip()
+
+
 def _tilde(text: str) -> str:
     """마크다운 글의 물결표를 이스케이프한다. '12월~1월, 11월~2월'처럼 ~ 가 두 번 나오면 화면(GFM)이 그 사이를 취소선으로 그린다."""
     return re.sub(r"(?<!\\)~", r"\~", text)
