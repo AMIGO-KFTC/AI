@@ -49,7 +49,8 @@ class _Citations:
         if not spec.evidence:
             return {}
         placed: dict[str, list[int]] = {}
-        grams = {f.key: bigrams(str(fields.get(f.key) or "")) for f in spec.shown}
+        # 비정기 업무의 프로젝트 개요에는 근거 번호를 달지 않는다(번호는 개요 밖의 가장 가까운 칸이나 항목 이름에 단다)
+        grams = {f.key: bigrams(str(fields.get(f.key) or "")) for f in spec.shown if not (spec.key == "irregular" and f.key == "overview")}
         for c in item.get("citations") or []:
             key = f"{c.get('label')}|{c.get('chunk_id') or c.get('quote', '')[:40]}"
             number = self.numbers.setdefault(key, len(self.numbers) + 1)
