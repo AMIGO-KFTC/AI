@@ -315,3 +315,15 @@ def test_numbered_decisions_glued_to_the_previous_sentence_are_split_into_lines(
     assert _lines_br(glued) == "1. 외부 자문<br>판단 근거: 반영함(2026-11-20 변론기일).<br>2. 소송 대응 방향 결정<br>판단 근거: 사건별로 수립함."
     assert _lines_br("1. 단일 결정\n판단 근거: 하나뿐") == "단일 결정<br>판단 근거: 하나뿐"  # 결정이 하나면 번호를 뗀다
     assert _lines_br("기준일은 2026. 11. 20 입니다. 2. 항은 별도") == "기준일은 2026. 11. 20 입니다. 2. 항은 별도"  # 번호 목록이 아니면 건드리지 않는다
+
+
+def test_irregular_project_overview_has_no_citation_marks():
+    """비정기 업무의 프로젝트 개요 칸에는 근거 번호를 달지 않는다(번호는 다른 칸이나 항목 이름에 달린다)."""
+    from amigo_agent.render import _Citations
+    from amigo_agent.template import SLOT_BY_KEY
+
+    spec = SLOT_BY_KEY["irregular"]
+    fields = {"name": "정산시스템 구축", "overview": "현행 정산시스템은 노후화되어 전면 개편이 필요해 차세대 정산시스템을 구축함", "decisions": "개발사를 선정함"}
+    item = {"fields": fields, "citations": [{"label": "추진계획서.md", "chunk_id": "c1", "quote": "현행 정산시스템은 노후화되어 전면 개편이 필요함"}]}
+    marks = _Citations().marks(spec, item, fields)
+    assert "overview" not in marks and marks  # 번호는 달리되 개요에는 달리지 않는다
